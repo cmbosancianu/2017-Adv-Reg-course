@@ -1,0 +1,458 @@
+---
+title: "Practice Code: Day 2"
+author:
+  name: "Constantin Manuel Bosancianu"
+  orcid: 0000-0001-7950-9798
+  email: bosancianu@icloud.com
+date: "August 1, 2017"
+execute:
+  eval: true
+  echo: true
+  warning: false
+  error: false
+bibliography: ../Bibliography.bib
+format:
+  html:
+    toc: true
+    code-fold: true
+    toc-location: left
+    theme: minty
+    number-sections: true
+    reference-location: margin
+    embed-resources: true
+---
+
+# Introduction
+
+We start off with data about multilateral aid flows, which comes from an analysis conducted by @neumayer_determinants_2003. This indicator represents the share of multilateral aid a country gets out of the total amount of aid. The donors are usually regional development banks, and a few UN agencies. The argument made is that this aid favors smaller countries, and does not discriminate between countries with varying records of human rights violations.
+
+**Warning**: the code chunk below will install packages on your system (if these are not already installed).
+
+```{r load-packages}
+library(pacman)
+p_load(readstata13, tidyverse, lmtest, MASS, car, texreg, knitr,
+       kableExtra, magrittr, ggthemes, effects, nlme, lme4,
+       sandwich)
+
+options(scipen = 8) # Avoid scientific notation for coefficients
+```
+
+```{r helpful-functions}
+fun_cent <- function(x) {
+    x - mean(x, na.rm = TRUE)
+}
+```
+
+# Reading data
+
+```{r read-data-1}
+df_aid <- read.dta13(file = "../02-data/12-Mult-lat-aid-flow.dta",
+                     convert.factors = TRUE)
+```
+
+```{r examine-data-1}
+df_aid %>%
+    glimpse()
+```
+
+# Codebook
+
+The following variables are the most important ones for our analysis:
+
+1. `multish`: multilateral aid flows share (percentage of total aid received)
+2. `lnpop`: natural logarithm of population size
+3. `lnpopsq`: square of natural logarithm of population size
+4. `lngdp`: natural logarithm of GDP per capita in constant 1995 USD PPP
+5. `lncolony`: number of years since 1900 that country has been a colony of an OECD member
+6. `lndist`: natural logarithm of distance from country's capital to New York, Rotterdam, or Tokyo (minimum of these 3)
+7. `freedom`: respect for political freedom (an average of Freedom House's indices of political rights and civil liberties)
+8. `militexp`: military expenditures as % of the central government expenditures
+9. `arms`: arms imports as % of total imports into the country
+10. `year83`: observation from 1983
+11. `year86`: observation from 1986
+12. `year89`: observation from 1989
+13. `year92`: observation from 1992
+
+```{r clean-data-1}
+df_aid_trim <- df_aid %>%
+    dplyr::select(multish, lnpop, lnpopsq, lngdp, lncolony, lndist,
+                  freedom, militexp, arms, year83, year86, year89,
+                  year92) %>%
+    na.omit()
+```
+
+# Initial model
+
+```{r initial-model-1}
+model1 <- lm(multish ~ lnpop + lnpopsq + lngdp +  lncolony + lndist +
+                 freedom + militexp + arms + year83 + year86 + year89 +
+                 year92,
+             data = df_aid_trim)
+
+summary(model1)
+```
+
+# Detecting heteroskedasticity
+
+## Visual approach
+
+We start with a plot of fitted values ($\hat{Y}$) against studentized residuals.
+
+```{r fitted-vs-studentized-res}
+#| fig-height: 6
+#| fig-width: 8
+#| fig-align: "center"
+#| dpi: 144
+
+plot(fitted(model1), studres(model1),
+     xlab = "Fitted values",
+     ylab = "Studentized residuals",
+     main = "Fitted vs. studentized residuals")
+abline(h = 0, lty = 2)
+lines(lowess(fitted(model1),
+      studres(model1)),
+      col = "blue")
+```
+
+We continue with plots of predictors against studentized residuals.
+
+```{r predictors-vs-studentized-res-1}
+#| fig-height: 6
+#| fig-width: 8
+#| fig-align: "center"
+#| dpi: 144
+
+plot(df_aid_trim$lnpop, studres(model1),
+     xlab = "ln(population)",
+     ylab = "Studentized residuals",
+     main = "ln(population) vs. studentized residuals")
+abline(h = 0, lty = 2)
+lines(lowess(df_aid_trim$lnpop, studres(model1)),
+      col = "blue")
+```
+
+```{r predictors-vs-studentized-res-2}
+#| fig-height: 6
+#| fig-width: 8
+#| fig-align: "center"
+#| dpi: 144
+
+plot(df_aid_trim$lnpopsq, studres(model1),
+     xlab = "ln(population) squared",
+     ylab = "Studentized residuals",
+     main = "ln(population) squared vs. studentized residuals")
+abline(h = 0, lty = 2)
+lines(lowess(df_aid_trim$lnpopsq, studres(model1)),
+      col = "blue")
+```
+
+```{r predictors-vs-studentized-res-3}
+#| fig-height: 6
+#| fig-width: 8
+#| fig-align: "center"
+#| dpi: 144
+
+plot(df_aid_trim$lngdp, studres(model1),
+     xlab = "ln(GDP per capita)",
+     ylab = "Studentized residuals",
+     main = "ln(GDP per capita) vs. studentized residuals")
+abline(h = 0, lty = 2)
+lines(lowess(df_aid_trim$lngdp, studres(model1)),
+      col = "blue")
+```
+
+If you want to inspect every predictor, please just modify the code with the new variable names. From what we've seen so far, though, it's pretty clear that there is heteroskedasticity.
+
+## Statistical tests
+
+Let's follow the steps one by one for the Breusch-Pagan test. **First**, store the residuals from the model, and square them.
+
+```{r breusch-pagan-1}
+df_aid_trim$residsq <- model1$residuals ^ 2
+```
+
+**Second**, run the regression using the squared residuals.
+
+```{r breusch-pagan-2}
+model1star <- lm(residsq ~ lnpop + lnpopsq + lngdp +  lncolony +
+                     lndist + freedom + militexp + arms + year83 +
+                     year86 + year89 + year92,
+                 data = df_aid_trim)
+summary(model1star)
+```
+
+You can draw the conclusion based on the coefficients themselves - residuals are associated with predictors, which should not happen. However, the F-test result also suggests there is a problem of heteroskedasticity.
+
+**Finally**, conduct a Lagrange-Multiplier test, which is (as its name suggests) a simple multiplication.
+
+```{r breusch-pagan-3}
+dim(df_aid_trim)[1] * summary(model1star)$r.squared
+rm(model1star)
+```
+
+In this case, the degrees of freedom are 12, and the critical value for a chi-squared test with 12 degrees of freedom at the 95% confidence level is 5.226. Our value for the LM test is much higher than this, so we can again conclude there is heteroskedasticity.
+
+There is also a canned solution, but it's really very important to feel like you have control over some of these procedures.
+
+```{r breusch-pagan-4}
+bptest(model1)
+```
+
+
+
+
+# Solution 1: Heteroskedasticity-consistent SEs
+
+In Stata, it's as easy as adding `, robust` to the regression command. R makes it a bit more difficult.^[This all changed with the creation of the `lm_robust()` function (which you can find in the `estimatr` package).]
+
+```{r robust-se-1}
+model1$newse <- vcovHC(model1, # This is the function that takes the
+                               # model's variance-covariance matrix,
+                               # and computes one with SEs that are HC.
+                       method = "white1", # General heteroskedasticity
+                       type = "HC0")
+```
+
+It has a few arguments that allow it to produce some more sophisticated types of HC SEs, which are even more robust in the face of small samples. However, our sample is large enough that we can rely on the standard ones.
+
+The `coeftest()` function from the `lmtest` package does a significance test based on the new variance-covariance matrix with HC SEs.
+
+```{r robust-se-2}
+coeftest(model1,          # old model object
+         model1$newse)    # HC variance-covariance matrix
+
+# coeftest(model1,
+#          481 / (481 - 12 - 1) * model1$newse)
+```
+
+It doesn't come out as in the original analysis because this also included a correction for the degrees of freedom. If you want to get exact results, uncomment the code in the chunk above and run it.
+
+Compare the two sets of results for a bit.
+
+It's extremely important to emphasize this: HC SEs do not do much to help you if other problems plague the model. If things like nonlinearity, specification error, or influential outliers exist, then it's likely that the coefficients are biased. In this case, inefficient SEs should be the last of your worries.
+
+```{r examine-problematic-outcome-1}
+#| fig-height: 6
+#| fig-width: 8
+#| fig-align: "center"
+#| dpi: 144
+
+ggplot(data = df_aid_trim,
+       aes(x = multish)) +
+       geom_histogram(binwidth = 0.1) +
+       xlab("Share of multilateral aid") +
+       theme_clean()
+```
+
+```{r examine-problematic-outcome-2}
+#| fig-height: 6
+#| fig-width: 8
+#| fig-align: "center"
+#| dpi: 144
+
+df_aid_trim$transdv <- (df_aid_trim$multish)^(1/3)
+
+ggplot(data = df_aid_trim,
+       aes(x = transdv)) +
+       geom_histogram(binwidth = 0.1) +
+       xlab("Share of multilateral aid") +
+       theme_clean()
+```
+
+An even better transformation is one from the Box-Cox family.
+
+```{r examine-problematic-outcome-3}
+df_aid_trim$transdv <- (df_aid_trim$multish ^ .18 - 1) / .18
+
+model1star <- lm(transdv ~ lnpop + lnpopsq + lngdp +  lncolony +
+                     lndist + freedom +militexp + arms + year83 +
+                     year86 + year89 + year92,
+                 data = df_aid_trim)
+summary(model1star)
+```
+
+We can now compare these with the result we would obtain if we applied heteroskedasticity-consistent SEs.
+
+```{r robust-se-3}
+model1star$newse <- vcovHC(model1star,
+                           method = "white1",
+                           type = "HC0")
+coeftest(model1star,
+         model1star$newse)
+rm(model1star, model1, df_aid_trim, df_aid)
+```
+
+Once correcting for some other problems with the model, heteroskedasticity-consistent SEs don't do that much anymore, in this particular case.
+
+
+
+
+# Solution 2: Weighted Least Squares (WLS)
+
+For this section we use a data set of over 2,000 individuals, for which we know their net financial wealth. The following variables are important for us:
+
+1. `nettfa`: net total financial assets, in 1,000s USD
+2. `age`: age in years
+3. `male`: R. is male
+4. `e401k`: R. is eligible for a 401k (defined-contribution pension account)
+
+```{r read-data-2}
+df_fin <- read.dta13(file = "../02-data/13-401ksubs.dta",
+                     convert.factors = FALSE)
+```
+
+The data set has over 9,000 individuals, but we are interested in the 2,017 who are single.
+
+```{r clean-data-2}
+df_fin %<>%
+    filter(fsize == 1)
+```
+
+## Initial model
+
+```{r initial-model-2}
+model2 <- lm(nettfa ~ age + agesq + male + inc + e401k,
+             data = df_fin)
+summary(model2)
+```
+
+What does the Breusch-Pagan test tell us?
+
+```{r breusch-pagan-5}
+bptest(model2)
+```
+
+The test is highly statistically significant, indicating that the null hypothesis of homoskedasticity can be safely rejected.
+
+There is good reason to assume that the variance in financial wealth actually depends on income. There is not much to save in a bank account when one is just over the limit of poverty. On the other hand, at higher levels of income, we are likely to see a lot more diversity in savings.
+
+## WLS
+
+So we assume that Var(`nettfa`|`income`) = $\sigma^2 \times income$. You can run this model in 2 ways. **First**, we can use the `lm()` function, but allow for a `weights = ` argument.
+
+```{r wls-run-1}
+model2.1 <- lm(nettfa ~ age + agesq + male + inc + e401k,
+               data = df_fin,
+               weights = 1 / inc)
+summary(model2.1)
+```
+
+**Second**, we can use the `gls()` function from the `nlme` package. This one actually uses ML estimation, but asymptotically the results will be the same.
+
+```{r wls-run-2}
+model2.2 <- gls(nettfa ~ age + agesq + male + inc + e401k,
+                data = df_fin,
+                weights = varFunc(~inc))
+summary(model2.2)
+
+rm(model2, model2.1, model2.2, df_fin)
+```
+
+
+# Solution 3: Feasible Generalized Least Squares (FGLS)
+
+With the slide information, and the `gls()` function, you pretty much have all the information you need to run a FGLS procedure. Rather than simply repeat the same old story, I thought I'd show you a kind of rare, but very cool, application of a type of FGLS.
+
+In this case of model, we actually know the variance structure. This is because we are trying to model an actual coefficient!
+
+The data for this application comes from wave 3 of the **CSES**. My dependent variable is a composite index of political efficacy (internal + external efficacy), where higher values denote more political efficacy.
+
+```{r read-data-3}
+df_cses3 <- readRDS(file = "../02-data/14-cses3-sub.rds")
+```
+
+```{r examine-data-2}
+df_cses3 %<>%
+    glimpse()
+```
+
+## Codebook
+
+Variables in the data:
+
+1. `age`: measured in decades
+2. `female`: dichotomous indicator (1 = *yes*)
+3. `education`: educational level, where 0 = *none* and 7 = *BA completed*
+4. `union`: union member (1 = *yes*)
+5. `income`: income quintile, from 0 to 4
+6. `majorit`: country has a majoritarian electoral system
+7. `gdpcap`: GDP per capita in the country
+8. `gininet`: Gini index of net income inequality in the country
+9. `cpi`: TI's corruption perception index
+10. `C1004`: country-year indicator
+
+It might come as a suprise, but this modeling strategy is actually asymptotically equivalent to a multilevel model.
+
+## First stage
+
+Instead of an MLM, the first stage is to take out coefficients from a set of country-by-country regressions.
+
+```{r fgls-1-stage}
+lst_res <- lmList(poleff ~ age + female + education + union + income | C1004,
+                  data = df_cses3,
+                  na.action = na.omit)
+```
+
+The `lmList()` function requires the individual-level model that needs to be tested in each group, and a grouping factor (in our case, `C1004`). The function then takes care of running the model in each group.
+
+```{r display-1-stage-results}
+summary(lst_res)$coefficients[ , , "income"]
+```
+
+We need a way to store these coefficients, though, as we will want to use them as DVs in a new regression, at the country level.
+
+```{r store-results-1-stage-1}
+df_coef_res <- data.frame(interc = as.numeric(summary(lst_res)$coefficients[1:50, 1, 4]),
+                          std = as.numeric(summary(lst_res)$coefficients[1:50, 2, 4]),
+                          cntry = attr(summary(lst_res)$coefficients, "dimnames")[[1]])
+
+# Bring in the country-level information that we need for our regression.
+df_agg <- df_cses3 %>%
+    group_by(C1004) %>%
+    summarise(gini = mean(gininet, na.rm = TRUE),
+              gdp = mean(gdpcap, na.rm = TRUE),
+              cpi = mean(cpi, na.rm = TRUE)) %>%
+    rename(cntry = 1)
+```
+
+Now that we have these 2 data sets, with coefficients, and with country-level information, we need to merge them. This is easily done as long as we have a variable in the two data sets that is named the same, and stores a unique ID for the observation.
+
+Merge the two data frames, by the `cntry` variable, with the help of the `left_join()` function.
+
+```{r merge-country-information}
+df_final <- left_join(df_coef_res, df_agg, by = "cntry") %>%
+  na.omit()
+rm(lst_res, df_coef_res, df_agg)
+```
+
+## Second stage
+
+At the second level, run the simple **FGLS** model with the coefficients as DVs, and with a known set of variances for the observations.
+
+```{r fgls-2-stage}
+model1 <- gls(interc ~ gini + cpi,
+              weights = varIdent(std),
+              data = df_final)
+summary(model1)
+```
+
+Just to check my story, here is how the output from an almost "legitimate" MLM would look like, where we would directly try to model the interaction between Gini and education.
+
+```{r fgls-check-mlm}
+model1mlm <- lmer(poleff ~ age + female + education + union + income +
+                      gininet + cpi + gininet * education +
+                      (1 + education | C1004),
+                  data = df_cses3,
+                  na.action = na.omit,
+                  REML = TRUE,
+                  control = lmerControl(optimizer = "bobyqa"))
+summary(model1mlm)
+```
+
+# Package versions
+
+Package versions used in this script.
+
+```{r package-versions}
+sessionInfo()
+```

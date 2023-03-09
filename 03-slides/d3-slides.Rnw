@@ -1,0 +1,903 @@
+% Taken from: https://mikedewar.wordpress.com/2009/02/25/latex-beamer-python-beauty/
+\documentclass[12pt,english,pdf,xcolor=dvipsnames,aspectratio=169,handout]{beamer}
+\usepackage{etex}
+\usetheme{default}
+\beamertemplatenavigationsymbolsempty
+\definecolor{fore}{RGB}{43,41,46}
+\definecolor{back}{RGB}{255,255,255}
+\definecolor{title}{RGB}{198,24,38}
+\setbeamercolor{titlelike}{fg=title}
+\setbeamercolor{normal text}{fg=fore,bg=back}
+\usepackage{mathpazo}
+\usepackage{amsmath}
+\usepackage{multirow}
+\renewcommand{\familydefault}{\rmdefault}
+\usepackage[T1]{fontenc}
+\usepackage{inputenc}
+\usepackage{parskip}
+\setcounter{secnumdepth}{3}
+\setcounter{tocdepth}{3}
+\usepackage{hyperref}
+\hypersetup{pdfauthor={Constantin Manuel Bosancianu},
+pdftitle={Advanced Topics in Applied Regression},
+pdfsubject={Day 3: Interactions & fixed-effects},
+pdfkeywords={Budapest, ECPR, 2017, day 3, SSMT}}
+\usepackage{babel}
+\usepackage{graphicx}
+\usepackage{subfigure}
+\usepackage{palatino}
+% Defines a checkmark
+\def\checkmark{\tikz\fill[scale=0.4,color=title](0,.35) -- (.25,0) -- (1,.7) -- (.25,.15) -- cycle;}
+\setbeamertemplate{itemize items}{\checkmark}
+% For table captions in Beamer
+\usepackage[labelformat=empty]{caption}
+\captionsetup[figure]{labelfont={color=fore}}
+\captionsetup[table]{labelfont={color=fore}}
+\usepackage{tikz, tikz-cd, animate}
+\usetikzlibrary{shapes,backgrounds,trees}
+\usetikzlibrary{decorations.pathreplacing}
+\usepackage{pgfplots}
+\pgfplotsset{compat=1.10}
+\usepgfplotslibrary{fillbetween}
+\usepackage{pgfplotstable}
+\usepackage{wrapfig}
+\usepackage{booktabs}
+\usepackage{dcolumn}
+\usepackage[sectionbib]{apacite}
+\renewcommand{\bibliographytypesize}{\footnotesize}
+% Set the design of the footer
+\makeatletter
+\setbeamercolor{author in head/foot}{fg=white, bg=title}
+\setbeamercolor{date in head/foot}{fg=white, bg=title}
+\setbeamercolor{institute in head/foot}{fg=white, bg=title}
+\setbeamertemplate{footline}
+{
+  \leavevmode%
+  \hbox{%
+  \begin{beamercolorbox}[wd=.3333333\paperwidth,ht=2.25ex,dp=1ex,center]{author in head/foot}%
+    \usebeamerfont{author in head/foot}\insertauthor
+  \end{beamercolorbox}%
+    \begin{beamercolorbox}[wd=.3333333\paperwidth,ht=2.25ex,dp=1ex,center]{institute in head/foot}%
+    \usebeamerfont{institute in head/foot}Central European University, Budapest
+  \end{beamercolorbox}%
+  \begin{beamercolorbox}[wd=.3333333\paperwidth,ht=2.25ex,dp=1ex,right]{date in head/foot}%
+    \usebeamerfont{date in head/foot}\insertshortdate{}\hspace*{2em}
+    \insertframenumber{} / \inserttotalframenumber\hspace*{2ex}
+  \end{beamercolorbox}}%
+  \vskip0pt%
+}
+\makeatother
+\title{Advanced Topics in Applied Regression}
+\subtitle{Day 3: Interactions \& fixed-effects}
+\author{Constantin Manuel Bosancianu}
+\institute{Doctoral School of Political Science \\ Central European University, Budapest\\\href{mailto:bosancianu@icloud.com}{bosancianu@icloud.com}}
+\date{August 2, 2017}
+\begin{document}
+\maketitle
+
+<<ch-setup, include=FALSE>>=
+library(pacman)
+p_load(foreign, readxl, tidyverse, magrittr, texreg, car,
+       MASS, wooldridge, AER, ggthemes, interplot, effects)
+@
+
+% PREAMBLE %
+\section{Preamble}
+
+\begin{frame}{Why interactions?}
+
+They allow for a much richer set of hypotheses to be put forward and tested.\bigskip
+
+In my own area of focus (political institutions, economic phenomena, and voter attitudes/behavior), such hypotheses involving moderation are very common.\bigskip
+
+One prominent example: income inequality's effect on voter turnout at different levels of a person's income \cite{solt2008}.\bigskip
+
+Despite their importance, misunderstandings still persist about how to interpret coefficients/effects in such models.
+
+\end{frame}
+
+
+
+
+
+
+\section{Basic setup}
+
+\begin{frame}
+\begin{center}
+    \Huge Basic setup
+\end{center}
+\end{frame}
+
+\begin{frame}{Why specify interactions}
+
+So far, we've worked with simple models. Think of the example from Monday, with Boston neighborhood average house prices. Here, I complicated it a bit by also adding a dummy for whether the neighborhood is on the Charles river or not:
+
+\begin{equation}
+Prices = a + b_1Rooms + b_2River + e
+\end{equation}
+
+Here, the effect of $River$ is assumed to be constant, $b_2$, no matter the level of the other variable in the model.\bigskip
+
+This is not always the case: effect of SES and union membership on political participation, where $b_{union}$ likely varies.
+
+\end{frame}
+
+
+
+\begin{frame}{What if the effect isn't constant?}
+
+The riverfront is a desirable real-estate location. Houses with more rooms are certainly more expensive everywhere in Boston, but it's likely that the price difference between $n+1$ and $n$ rooms is higher on the riverfront than elsewhere.\bigskip
+
+In modelling terms, we might say that the effect of $Rooms$ on $Price$ is different based on the value of the $River$ dummy.
+
+\end{frame}
+
+
+\begin{frame}{From words to equation (I)}
+
+\begin{align}
+Prices =& a_1 + b_1Rooms + b_2River + e \nonumber\\
+b_1 =& a_2 + b_3River \nonumber\\
+a_1 =& a_3 + b_4River \nonumber
+\end{align}
+
+The second equation gives us how the effect of $Rooms$ ($b_1$) varies depending on $River$.\bigskip
+
+The third equation makes sure that the intercept varies as well (which usually happens if the slope varies).
+
+\end{frame}
+
+
+\begin{frame}{From words to equation (II)}
+
+{\footnotesize
+\begin{align}
+Prices =& a_3 + b_4River + (a_2 + b_3River)*Rooms + b_2River + e \nonumber\\
+  =& a_3 + (b_4+b_2)*River + a_2Rooms + b_3River*Rooms + e \nonumber \\
+  =& a_3 + (b_4+b_2)*River + (a_2+b_3River)*Rooms + e
+\end{align}
+}%
+
+The third row shows most clearly how the effect of $Rooms$, $a_2+b_3River$, now varies depending on the precise value of the $River$ indicator.\bigskip
+
+This depends, of course, on the $b_3$ being statistically significant. If not, then the effect of $Rooms$ is always $a_2$.
+
+\end{frame}
+
+
+\begin{frame}{Basic interaction model}
+
+\begin{equation}
+  \footnotesize
+  Prices = a_3 + (b_4+b_2)*River + (a_2+b_3River)*Rooms + e
+\end{equation}\bigskip
+
+ If we designate $a_3$ as $\gamma_1$, $b_4+b_2$ as $\gamma_2$, $a_2$ as $\gamma_3$, and $b_3$ as $\gamma_4$, then we get a general form of the interaction:\bigskip
+
+\begin{equation}
+  \footnotesize
+  Prices = \gamma_1 + \gamma_2River + \gamma_3Rooms + \gamma_4River*Rooms + e
+\end{equation}
+ 
+\end{frame}
+
+
+
+\begin{frame}{Interaction model (cont.)}
+
+When $River=0$,
+
+\begin{align}
+  Prices =& \gamma_1 + \gamma_20 + \gamma_3Rooms + \gamma_4Rooms*0 + e \nonumber\\
+         =& \gamma_1 + \gamma_3Rooms + e
+\end{align}
+
+When $River=1$,
+
+\begin{align}
+  Prices =& \gamma_1 + \gamma_21 + \gamma_3Rooms + \gamma_4Rooms*1 + e \nonumber\\
+         =& \gamma_1 + \gamma_2 + Rooms(\gamma_3 + \gamma_4) + e
+\end{align}
+
+The effect of $Rooms$ varies depending on the value of $River$.
+
+\end{frame}
+
+
+
+
+\begin{frame}{Symmetry in interpretation}
+
+When $Rooms=0$, then
+
+\begin{align}
+  Prices =& \gamma_1 + \gamma_2River + \gamma_3*0 + \gamma_4River*0 + e \nonumber\\
+         =& \gamma_1 + \gamma_2River + e \nonumber
+\end{align}
+
+When $Rooms=1$,
+
+\begin{align}
+  Prices =& \gamma_1 + \gamma_2River + \gamma_3*1 + \gamma_4River*1 + e \nonumber\\
+         =& \gamma_1 + \gamma_3 + River(\gamma_2 + \gamma_4) + e \nonumber
+\end{align}
+
+The effect of $River$ varies depending on the level of $Rooms$.
+
+\end{frame}
+
+
+
+
+
+\section{Interpreting coefficients}
+
+
+\begin{frame}
+\begin{center}
+    \Huge Interpretation
+\end{center}
+\end{frame}
+
+
+\begin{frame}{Wages in 1976}
+We have information on 526 US workers:
+
+\begin{itemize}
+\item \texttt{wage}: wage in USD per hour;
+\item \texttt{educ}: years of education;
+\item \texttt{gender}: male or female (with 1=female);
+\item \texttt{exper}: labor force experience (yrs. in labor market);
+\item \texttt{tenure}: yrs. with current employer.
+\end{itemize}
+
+The goal is to predict wages.\footnote{In fact, we'll be predicting $log(wage)$, as wages tend to be right skewed, which causes problems with the normality of errors.}
+
+\end{frame}
+
+
+\begin{frame}[fragile]{Interpreting coefficients}
+<<ch-1, eval=TRUE, echo=FALSE, message=FALSE, warning=FALSE, comment=NA, results='asis',size='scriptsize',cache=TRUE>>=
+data("wage1")
+
+fun_cent <- function(x) {
+  x - mean(x, na.rm = TRUE)
+}
+
+wage1 %<>%
+    mutate(educ_cent = fun_cent(educ),
+           exper_cent = fun_cent(exper),
+           tenure_cent = fun_cent(tenure))
+
+model1 <- lm(log(wage) ~ female + educ_cent + exper_cent +
+               tenure_cent + female * tenure_cent,
+             na.action = na.omit,
+             data = wage1)
+
+texreg(list(model1), single.row = FALSE,
+       custom.model.names = c("DV: Log hourly wage (USD)"),
+       custom.coef.names = c("(Intercept)","Female", "Yrs. education",
+                             "Yrs. experience", "Yrs. tenure",
+                             "Female * Tenure"),
+       digits=3, caption = "Specification with interaction: Female * Tenure",
+       dcolumn = TRUE, booktabs = TRUE, use.packages = FALSE,
+       fontsize = "scriptsize", caption.above = TRUE,
+       custom.note = "%stars. Continuous variables were demeaned.")
+@
+\end{frame}
+
+
+
+\begin{frame}{Interpreting coefficients (cont.)}
+How do you interpret $\beta_{female}=\Sexpr{round(coef(model1)["female"], digits=3)}$?\bigskip
+
+\textcolor{title}{Important}: after demeaning, the ``0'' for variable $X$ refers to the mean of $X$, $\overline{X}$.\bigskip
+
+How do you interpret $\beta_{tenure}=\Sexpr{round(coef(model1)["tenure"], digits=3)}$?\bigskip
+
+How do you interpret $\beta_{female*tenure}=\Sexpr{round(coef(model1)["female:tenure"], digits=3)}$? How is the effect of $tenure$ different for men, compared to women?
+
+\end{frame}
+
+
+
+\begin{frame}[fragile]{Graphical depiction}
+  
+\begin{figure}[!ht]
+\centering
+\begin{tikzpicture}[scale=0.9]
+\begin{axis}[
+	xlabel=Tenure (rescaled), % label x axis
+	ylabel=Log(wages), % label y axis
+	axis lines=left, %set the position of the axes
+	xmin=0, xmax=10, % set the min and max values of the x-axis
+	ymin=1.7, ymax=2.0, % set the min and max values of the y-axis
+	xticklabels={,,}, % Hide tick labels
+	yticklabels={,,},
+	clip=false
+]
+
+\draw [very thick] (0,116)--(80,256);
+\draw [very thick, dashed] (0,66)--(80,206);
+\draw [very thick] (0,66)--(80,146);
+\draw [thick,->,>=stealth] (1,66)--(1,116) node [midway,right, yshift=5pt] {\scriptsize{$\beta_{female}$}};
+\draw [thick,->,>=stealth] (20,150)--(40,150) node [midway,below] {\scriptsize{$1$}};
+\draw [thick,->,>=stealth] (40,150)--(40,185) node [midway,right] {\scriptsize{$\beta_{tenure}$}};
+\node [fill=none] at (83, 156) {\scriptsize{$Women$}};
+\node [fill=none] at (83, 266) {\scriptsize{$Men$}};
+\node [fill=none, text width=1.5cm] at (88, 216) {\scriptsize{Without $\times$}};
+\draw[decorate,decoration={brace}, thick] (-1,0) -- node[left] {\scriptsize{$Intercept$}} (-1,116);
+% Add the arrows for the interaction
+\draw [thick,->,>=stealth] (20,101)--(20,86) node [midway,right, yshift=3pt] {\tiny{$\beta_{*}$}};
+\draw [thick,->,>=stealth] (40,136)--(40,106) node [midway,right, yshift=3pt] {\scriptsize{$2\beta_{*}$}};
+\draw [thick,->,>=stealth] (60,171)--(60,126) node [midway,right, yshift=2pt] {\scriptsize{$3\beta_{*}$}};
+\end{axis}
+\end{tikzpicture}
+\caption{Example with wages (graph adapted from \citeNP{brambor2005}). $\beta_{*}$ means $\beta_{female*tenure}$.}
+\end{figure}
+
+\end{frame}
+
+
+
+
+\begin{frame}[fragile]{Difference between \textit{coefficients} and \textit{effects}}
+
+For linear models without interactions, $coefficient=effect$. A $\beta_X=2$ means the \textit{effect} of 1-unit increase in $X$ on $Y$ is 2.\bigskip
+
+For linear models with (significant) interactions, $coefficient \neq effect$. Rather, the effect of an interacted variable is a function of 2 coefficients.\bigskip
+
+{\footnotesize
+\begin{align}
+Wage =& 1.762 - 0.311*Fem. + 0.021*Tnr. - 0.013*Fem.*Tnr. + \dots \nonumber \\
+     =& 1.762 + 0.021*Tnr. + \underbrace{(-0.311-0.013*Tnr.)}_{\text{effect}}*Fem. + \dots \nonumber
+\end{align}
+}%
+
+\end{frame}
+
+
+
+\begin{frame}{2nd example: differences in salaries}
+
+<<ch-2, eval=TRUE, echo=FALSE, message=FALSE, warning=FALSE, comment=NA, results='asis'>>=
+df_salary <- read.table("../02-data/07-Salary-survey.txt",
+                        header = TRUE)
+colnames(df_salary) <- c("salary", "exp", "educ", "manage")
+# Experience is measured in years, salary in USD, and management as
+# 1 (yes) or 2 (no)
+df_salary %<>%
+    mutate(exp_cent = fun_cent(exp))
+
+model1 <- lm(salary ~ exp_cent + manage + exp_cent*manage,
+             data = df_salary)
+
+texreg(list(model1), digits = 2,
+       custom.coef.names = c("(Intercept)", "Experience",
+                             "Management", "Exper.*Managem."),
+       custom.model.names = c("DV: Salary in company"),
+       booktabs = TRUE, dcolumn = TRUE, use.packages = FALSE,
+       fontsize = "footnotesize", caption.above = TRUE,
+       caption = "Experience measured in years, management is dichotomous indicator (1=manager)",
+       custom.note = "%stars. Experience has been centered by subtracting 7.5 from each value.")
+@
+
+\end{frame}
+
+
+
+\begin{frame}{3rd example: Boston house prices}
+
+<<ch-3, eval=TRUE, echo=FALSE, message=FALSE, warning=FALSE, comment=NA, results='asis', cache=TRUE>>=
+df_boston <- read.spss(file = "../02-data/04-boston.sav",
+                       to.data.frame = TRUE,
+                       use.value.labels = FALSE)
+df_boston %<>%
+    mutate(town = as.character(town),
+           town = str_trim(town),
+           rm_cent = fun_cent(rm))
+
+model1 <- lm(medv ~ rm_cent + chas + rm_cent*chas,
+             data = df_boston,
+             na.action = na.omit)
+model2 <- lm(medv ~ rm_cent + chas,
+             data = df_boston,
+             na.action = na.omit)
+
+texreg(list(model1,model2), single.row = FALSE,
+       custom.model.names = c("Model 1", "Model 2"),
+       custom.coef.names = c("(Intercept)", "Average num. rooms",
+                             "Charles river", "Charles*Rooms"),
+       digits = 3, caption = "Predicting house price in neighborhood",
+       dcolumn = TRUE, booktabs = TRUE, use.packages = FALSE,
+       fontsize = "footnotesize", caption.above = TRUE,
+       custom.note = "%stars. Number of rooms has been demeaned.")
+@
+
+\end{frame}
+
+
+
+
+\begin{frame}{Interactions -- other measurement scales}
+
+The interpretations carry over perfectly, e.g. when both are continuous (we will practice more during the lab).\bigskip
+
+\begin{equation}
+Y = a + b_1X_1 + b_2X_2 + b_3(X_1*X_2) + e
+\end{equation}\bigskip
+
+$b_2$ is the effect of $X_2$ on $Y$ when $X_1$ is 0.\bigskip
+
+The converse interpretation, for $b_1$, is also identical.
+
+\end{frame}
+
+
+
+
+\section{Collinearity}
+
+
+\begin{frame}
+\begin{center}
+    \Huge Collinearity
+\end{center}
+\end{frame}
+
+
+\begin{frame}[fragile]{High correlations in interactions}
+
+<<ch-4, eval=TRUE, echo=TRUE, message=FALSE, warning=FALSE, comment=NA, size="scriptsize", cache=TRUE>>=
+out <- mvrnorm(300, # number of observations
+               mu = c(5, 5), # means of the variables
+               # correlation matrix
+               Sigma = matrix(c(1, 0.35, 0.35, 1), ncol = 2),
+               empirical = TRUE)
+colnames(out) <- c("x1", "x2")
+out <- as.data.frame(out)
+cor(out$x1, out$x2) # So, that's the correlation
+out$inter <- out$x1 * out$x2 # Construct the interaction term
+cor(out$x1, out$inter) # Correlation
+cor(out$x2, out$inter) # Correlation
+@
+
+In these situations, the VIF becomes very large, making the sampling variance for coefficients large as well.
+
+\end{frame}
+
+
+
+
+\begin{frame}[fragile]{High correlations -- ``solution''}
+
+Essentially, it's justified that we have large SEs---the software is telling us it doesn't have enough \textit{unique} information to estimate the effect precisely.\bigskip
+
+The ``solution'': center the variable, i.e. subtract the mean/median from all observations on the variable.\bigskip
+
+\begin{equation}
+X_i^{*} = X_i - \overline{X}
+\end{equation}
+
+\end{frame}
+
+
+
+
+\begin{frame}[fragile]{High correlations -- ``solution''}
+
+<<ch-5, eval=TRUE, echo=TRUE, message=FALSE, warning=FALSE, comment=NA, size="scriptsize", cache=TRUE>>=
+out$x1mod <- out$x1 - mean(out$x1)
+out$x2mod <- out$x2 - mean(out$x2)
+cor(out$x1mod, out$x2mod) # cor(X1,X2) is the same
+
+out$intermod <- out$x1mod * out$x2mod
+cor(out$x1mod, out$intermod) # Correlation
+cor(out$x2mod, out$intermod) # Correlation
+@
+
+Not so much a solution; more of a \textit{re-specification} of the original model \cite[pp.~93--99]{kam2007}.
+
+Centering will produce different $b$s, $a$ and SEs, simply because these refer to different quantities.\bigskip
+
+\end{frame}
+
+
+
+
+\section{Presenting uncertainty and results}
+
+
+\begin{frame}
+\begin{center}
+    \Huge Presentation
+\end{center}
+\end{frame}
+
+
+\begin{frame}{Significance testing in interactions}
+With interactions, significance tests also take on a different interpretation \cite{braumoeller2004}.\bigskip
+
+\begin{equation}
+Y = a + b_1X_1 + b_2X_2 + b_3(X_1*X_2) + e
+\end{equation}
+
+The significance test on $b_1$ is only valid for instance when $b_2=0$.\bigskip
+
+At other levels of $b_2$, this significance test might no longer produce a positive result.
+
+\end{frame}
+
+
+\begin{frame}{Sampling variance}
+
+\begin{equation}
+Y = a + b_1X_1 + b_2X_2 + b_3(X_1*X_2) + e
+\end{equation}\bigskip
+
+Since it's an interaction, $b_1$ is the coefficient of $X_1$, and $eff_{X_1}$ is the effect of $X_1$ on $Y$. If $b_3$ is significant, $b_1 \neq eff_{X_1}$\bigskip
+
+\begin{equation}
+V(eff_{X_1}) = V(b_1) + X_2^2V(b_3) + 2X_2Cov(b_1,b_3)
+\label{eq:eq-1}
+\end{equation}
+
+This makes it clear that the variance varies depending on $X_2$ as well.
+
+\end{frame}
+
+
+
+\begin{frame}{Presenting results}
+There is little need to use the formula in Equation \ref{eq:eq-1} to compute things by hand.\footnote{An example that shows you how to do this can be found in today's script.}\bigskip
+
+The best way to do present results from a specification with interactions is by plotting both the effect and its associated uncertainty.\bigskip
+
+An easy way to do this is with the \texttt{effects} package in R (but also check out Thomas Leeper's \texttt{margins} package).
+
+\end{frame}
+
+
+\begin{frame}{Predicting salaries}
+<<ch-6, eval=TRUE, echo=FALSE, message=FALSE, warning=FALSE, comment=NA, results='asis', cache=TRUE>>=
+df_salary <- read.table("../02-data/07-Salary-survey.txt",
+                        header = TRUE)
+colnames(df_salary) <- c("salary", "exp", "educ", "manage")
+
+# Center the experience, by subtracting 7.5 from it
+df_salary %<>%
+    mutate(exp_cent = fun_cent(exp))
+
+model1 <- lm(salary ~ exp_cent + manage + exp_cent*manage,
+             data = df_salary)
+
+texreg(list(model1), digits = 2,
+       custom.coef.names = c("(Intercept)", "Experience",
+                             "Management", "Exper.*Managem."),
+       custom.model.names = c("DV: Salary in company"),
+       booktabs = TRUE, dcolumn = TRUE, use.packages = FALSE,
+       fontsize = "footnotesize", caption.above = TRUE,
+       caption = "Experience measured in years, management is dichotomous indicator (1=manager)",
+       custom.note = "%stars. Experience has been centered by subtracting 7.5 from each value.")
+@
+\end{frame}
+
+
+
+\begin{frame}{Predicting salaries -- effect of experience}
+<<ch-7, eval=FALSE, echo=FALSE, message=FALSE, warning=FALSE, comment=NA, results='asis'>>=
+graph1 <- interplot(model1, "exp_cent", "manage") +
+  scale_x_continuous(name = "Management",
+                     breaks = c(0,1),
+                     labels = c("No", "Yes")) +
+  ylab("Effect of experience on salary") +
+  theme_clean()
+ggsave(graph1,
+       filename = "../04-graphs/03-01.pdf",
+       height = 3, width = 4, dpi = 250)
+rm(graph1)
+@
+
+\begin{figure}
+\centering
+\includegraphics{../04-graphs/03-01}
+\end{figure}
+
+\end{frame}
+
+
+
+\begin{frame}{Predicting salaries -- effect of management}
+<<ch-8, eval=FALSE, echo=FALSE, message=FALSE, warning=FALSE, comment=NA, results='asis'>>=
+graph2 <- interplot(model1, "manage", "exp_cent") +
+  xlab("Experience (years)") +
+  ylab("Effect of mngmt. on salary") +
+  theme_clean()
+ggsave(graph2,
+       filename = "../04-graphs/03-02.pdf",
+       height = 3, width = 4, dpi = 250)
+rm(graph2)
+@
+
+\begin{figure}
+\centering
+\includegraphics{../04-graphs/03-02}
+\end{figure}
+
+\end{frame}
+
+
+\begin{frame}{Predicting hourly wage -- 3-way interaction}
+<<ch-9, eval=FALSE, echo=FALSE, message=FALSE, warning=FALSE, comment=NA, results='asis',size='scriptsize',cache=TRUE>>=
+data("wage1")
+
+wage1 %<>%
+    mutate(educ_cent = fun_cent(educ),
+           exper_cent = fun_cent(exper),
+           tenure_cent = fun_cent(tenure))
+
+model2 <- lm(log(wage) ~ female + educ_cent + married + exper_cent +
+               tenure_cent +female*married*tenure_cent,
+             na.action = na.omit,
+             data = wage1)
+
+pdf(file = "../04-graphs/03-03.pdf",
+    height = 4, width = 6)
+plot(Effect(c("female", "married", "tenure_cent"), model2, 
+            xlevels = list(female = c(0, 1), married = c(0, 1), 
+                           tenure = -5:25)),
+     main = "Female * Married * Tenure interaction",
+     xlab = "Tenure", ylab = "Effect on log(wage)")
+dev.off()
+@
+
+\begin{figure}
+\centering
+\includegraphics[scale=0.75]{../04-graphs/03-03}
+\end{figure}
+
+\end{frame}
+
+
+
+
+
+\section{Fixed effects}
+
+\begin{frame}
+\begin{center}
+    \Huge Fixed effects
+\end{center}
+\end{frame}
+
+
+\begin{frame}{Why fixed effects?}
+
+<<ch-10, echo=FALSE, eval=TRUE, warning=FALSE, comment=NA, message=FALSE, results='asis'>>=
+df_boston <- read.spss(file = "../02-data/04-boston.sav",
+                       to.data.frame = TRUE,
+                       use.value.labels = FALSE)
+
+df_boston %<>%
+    mutate(town = as.character(town),
+           town = str_trim(town)) %>%
+    filter(town %in% c("Cambridge", "Boston Roxbur"))
+
+model1 <- lm(medv ~ rm, data = df_boston,
+            na.action = na.omit)
+
+texreg(list(model1), single.row = FALSE,
+       custom.model.names = c("DV: House price (ave.)"),
+       custom.coef.names = c("(Intercept)", "Average num. rooms"),
+       digits = 3, caption = "Predicting house price using number of rooms",
+       dcolumn = TRUE, booktabs = TRUE, use.packages = FALSE,
+       caption.above = TRUE, fontsize = "footnotesize")
+@
+
+\end{frame}
+
+
+\begin{frame}{Why fixed effects?}
+<<ch-11, echo=FALSE, eval=FALSE, warning=FALSE, comment=NA, message=FALSE, results='asis'>>=
+df_boston %<>%
+    mutate(town = if_else(town == "Boston Roxbur", "Roxbury", town))
+
+graph1 <- ggplot(data = df_boston,
+                 aes(x = rm, y = medv,
+                     color = town,
+                     group = town)) + 
+  geom_point(size = 2) +
+  geom_smooth(method = "lm") +
+  xlab("Average rooms") +
+  ylab("House price") +
+  theme_clean() +
+  theme(legend.position = "top")
+ggsave(graph1,
+       filename = "../04-graphs/03-04.pdf",
+       height = 4, width = 6)
+rm(graph1)
+@
+
+\begin{figure}
+\centering
+\includegraphics[scale=0.7]{../04-graphs/03-04}
+\end{figure}
+
+\end{frame}
+
+
+\begin{frame}{Why fixed effects?}
+
+\begin{enumerate}
+\item As a solution to the issue of heteroskedasticity, when the problem is caused by different trends in each of the groups.
+\item As a solution to the issue of omitted variable bias, on the road to a better causal estimate of the effect of $X$ on $Y$.
+\end{enumerate}\bigskip
+
+These two issues are related, inasmuch as the trends in the groups are caused by variables which our model specification does not include.
+
+\end{frame}
+
+
+\begin{frame}{Classic example}
+
+We have 172 children assessed with a test at 3 points in time.\bigskip
+
+The goal is to understand what predicts their test scores, and whether extra courses helps.\bigskip
+
+Measurements at multiple points in time are great for boosting sample size, and lowering SEs, but they add complications to the analysis: clustering.
+
+\end{frame}
+
+
+\begin{frame}{Classic example}
+
+<<ch-12, echo=FALSE, eval=TRUE, warning=FALSE, comment=NA, message=FALSE, cache=TRUE, results='asis', size='scriptsize'>>=
+df_grades <- read.spss(file = "../02-data/08-School-exam.sav",
+                       to.data.frame = TRUE,
+                       use.value.labels = FALSE)
+
+df_grades_sub <- df_grades %>%
+    filter(nschcode %in% c(1:10))
+
+model1 <- lm(test ~ female + ses + courses,
+             data = df_grades_sub)
+
+texreg(list(model1), single.row = FALSE,
+       custom.model.names = c("DV: Test score"),
+       custom.coef.names = c("(Intercept)", "Female", "SES index",
+                             "AP courses"),
+       digits=3, caption = "Predicting test scores",
+       dcolumn = TRUE, booktabs = TRUE, use.packages = FALSE,
+       fontsize = "scriptsize", caption.above = TRUE)
+
+model1 <- lm(test ~ female + ses + courses + as.factor(nschcode),
+             data = df_grades_sub)
+@
+
+What if other factors, e.g. genetic or psychological, are at play both for AP courses and test scores?
+
+\end{frame}
+
+
+
+\begin{frame}{Standard model}
+
+\begin{equation}
+Score = a + b_1X_1 + \dots b_kX_k + e
+\end{equation}
+
+In the standard model, one of the assumptions is that $e$ is distributed $\mathcal{N}(0, \sigma_e^2)$.\bigskip
+
+This is no longer the case is there are omitted predictors $Z$, which were not included in the model.\footnote{The bigger implication here is also the fact that the effects of $X_1$, \dots, $X_k$ are likely biased in this case.}
+
+\end{frame}
+
+
+\begin{frame}{The error term}
+
+\begin{equation}
+Score_{it} = b_1X_1 + \dots b_kX_k + \underbrace{\alpha_i + e_{it}}_{e}
+\end{equation}\bigskip
+
+Now the error is decomposed into an individual-specific term, $\alpha_i$, and an observation-specific one, $e_{it}$.\footnote{This observation can be understood as a ``individual i at time t'' case.}\bigskip
+
+If any time-invariant factors not in the model have an effect on test score, this means estimates for some $X$s are biased.
+
+\end{frame}
+
+
+
+\begin{frame}{Within- and between-}
+
+2 sources of variance: between-individuals and within-individuals (over time).\bigskip
+
+Suppose that over time we have a good model. However, the between-individual variance is the source of problems, as it may include variables we cannot observe in the data: drive to succeed, or genetic factors.\bigskip
+
+The solution adopted by FE is to do away with the problematic variance, as either way our interest is in the time-varying factor: number of AP courses.
+
+\end{frame}
+
+
+\begin{frame}{FE strategy: demeaning}
+
+If we average the values over time for each student, $\bar{Y_i}$, $\bar{X_1}$, \dots, $\bar{X_k}$, and then subtract observations over time from these averages, we get
+
+\begin{equation}
+\footnotesize
+Score_{it} - \overline{Score_i} = (X_1 - \bar{X_1})\beta_1 + \dots + (X_k - \bar{X_k})\beta_k + e_{it} - \bar{e_i}
+\end{equation}
+
+This takes care of the problematic between-variance, as all that remains is within-variance.
+
+\begin{table}
+\footnotesize
+\begin{tabular}{l c c c | c c c}
+\toprule[0.2em]
+             & \multicolumn{3}{c}{Raw} & \multicolumn{3}{c}{Demeaned} \\
+             & $t_1$ & $t_2$ & $t_3$ & $t_1$ & $t_2$ & $t_3$ \\
+\cmidrule{2-7}
+Individual 1 & 10 & 20 & 30 & -10 & 0 & 10 \\
+Individual 2 & 60 & 70 & 80 & -10 & 0 & 10 \\
+\bottomrule[0.2em]
+\end{tabular}
+\end{table}
+
+\end{frame}
+
+
+
+\begin{frame}{FE ``cousins'': LSDV}
+
+Least Squares Dummy Variable (LSDV) regression.\bigskip
+
+Add a set of $i-1$ dummy indicators\footnote{That's because we still want to estimate an intercept.} for persons, which capture \textit{all} the between-person variation---the problematic one.
+
+\begin{equation}
+\footnotesize
+Score_{it} = a + b_1X_1 + \dots + b_kX_k + \underbrace{P_1 + \dots + P_{i-1}}_{\text{$i-1$ terms}} + e_{it}
+\end{equation}
+
+These allow for the causal effect to be estimated only based on within-variance.\bigskip
+
+LSDV and FE will be \textit{identical}.
+
+\end{frame}
+
+
+
+\begin{frame}{FE ``cousins'': first differences (FD)}
+
+Particularly valuable for cases where auto-correlation of measurements proximate in time might be an issue.\bigskip
+
+Instead of trying to explain raw scores, this approach focuses on score differences between adjacent time points.
+
+\begin{equation}
+\Delta Y_t = \Delta X_{1t}\beta_1 + \dots + \Delta X_{kt}\beta_k + \Delta e_{it}
+\end{equation}
+
+where $\Delta Y_t = Y_{t+1} - Y_t$.\bigskip
+
+FE and FD will be identical \textit{only} in instances with 2 time points.
+
+\end{frame}
+
+
+
+
+% FRAME
+\begin{frame}
+\begin{center}
+    \Huge Thank \textcolor{title}{you} for the kind attention!
+\end{center}
+\end{frame}
+
+% REFERENCES %
+
+\begin{frame}
+\frametitle{References}
+\bibliographystyle{apacite}
+\bibliography{../Bibliography}
+\end{frame}
+
+\end{document}

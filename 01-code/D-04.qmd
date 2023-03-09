@@ -1,0 +1,731 @@
+---
+title: "Practice Code: Day 4"
+author:
+  name: "Constantin Manuel Bosancianu"
+  orcid: 0000-0001-7950-9798
+  email: bosancianu@icloud.com
+date: "August 3, 2017"
+execute:
+  eval: true
+  echo: true
+  warning: false
+  error: false
+bibliography: ../Bibliography.bib
+format:
+  html:
+    toc: true
+    code-fold: true
+    toc-location: left
+    theme: minty
+    number-sections: true
+    reference-location: margin
+    embed-resources: true
+---
+
+# Introduction
+
+```{r load-packages}
+library(pacman)
+p_load(readstata13, tidyverse, lmtest, MASS, car, texreg, knitr,
+       kableExtra, magrittr, ggthemes, effects, interplot, zoo,
+       splines, mgcv, visreg)
+
+options(scipen = 8) # Avoid scientific notation for coefficients
+```
+
+```{r helpful-functions}
+fun_cent <- function(x) {
+    x - mean(x, na.rm = TRUE)
+}
+```
+
+Today's practice will be different, in some respects, than the sessions from past days. Our usual *modus operandi* has been to faithfully follow the concepts and analyses discussed in the lecture part by means of code.
+
+However, today that pattern would not be very useful. This is because almost no current day analysis focuses on a nonparametric estimate of the effect of a single variable on the outcome. Whan we want to see is multivariate analyses. This is why we start with a very quick coverage of the concepts discussed in the first session, and then move to an practical presentation of how smoothers and splines are used in multivariate specifications called semiparametric models.
+
+Because the goal is to get to semiparametric specifications as quickly as possible, I continue with the same example I used in the first session: support for challengers in House elections in 1992.
+
+```{r read-data-1}
+df_jacob <- read.dta13(file = "../02-data/09-jacob.dta",
+                       convert.factors = FALSE)
+```
+
+The relationship we're interested in describing.
+
+```{r examine-data-1}
+#| fig-height: 6
+#| fig-width: 8
+#| fig-align: "center"
+#| dpi: 144
+
+ggplot(data = df_jacob,
+       aes(x = perotvote,
+           y = chal_vote)) +
+    geom_point(size = 2,
+               color = "gray60") +
+    labs(x = "Support for Perot (%)",
+         y = "Support for challengers (%)") +
+    theme_clean()
+```
+
+
+
+
+# Local Polynomial Regression (LPR)
+
+```{r subset-data}
+df_lpr <- df_jacob %>%
+    dplyr::select(chal_vote, perotvote) %>%
+    arrange(perotvote)
+```
+
+Doing a moving average smoother usually involves setting a window width, and then running a `for()` loop across most of the `X` variable, so as to compute the moving average. While that is fine for 312 observations, it would be terribly inefficient (not in the statistical sense of the word) for larger data sets. As a general rule, `for()` loops are not a good idea in **R**. This is why we will use a dedicated function for this in the `zoo` package: `rollmean()`.
+
+```{r rolling-mean-1}
+yhat <- rollmean(df_lpr$chal_vote, # predictor variable
+                 k = 51) # window width
+```
+
+The problem is that for the first 25 and last 25 values, a moving average cannot be computed, as the window width would be smaller than 51. So, if we want to store the `yhat` in the original data set, we have to use a small hack.
+
+```{r rolling-mean-2, results='asis'}
+df_lpr$yhat <- c(rep(NA, times = 25), # NA padding in the beginning
+                 yhat, # actual values
+                 rep(NA, times = 25)) # NA padding at the end
+
+df_lpr %>%
+    mutate(pos = 1:n()) %>%
+    relocate(pos) %>%
+    slice(c(1:10, 20:30, 40:50)) %>%
+    kable(digits = 3,
+          caption = "Rolling mean results",
+          col.names = c("Position", "Challenger %", "Perot %", "Yhat"),
+          caption.above = TRUE) %>%
+    kable_styling(full_width = TRUE)
+```
+
+```{r plot-rolling-mean-1}
+#| fig-height: 6
+#| fig-width: 8
+#| fig-align: "center"
+#| dpi: 144
+
+ggplot(data = df_lpr,
+       aes(x = perotvote,
+           y = chal_vote)) +
+    geom_point(size = 1.5,
+               color = "grey60") +
+    labs(x = "Perot vote (%)",
+         y = "Support for challengers (%)") +
+    theme_clean() +
+    geom_line(aes(x = perotvote,
+                  y = yhat),
+              linewidth = 2,
+              color = "steelblue3") +
+    geom_smooth(method = "lm",
+                se = FALSE,
+                linewidth = 1.5,
+                color = "darkorange3")
+```
+
+What if the window was changed, to cover more of the data? Here I'm going to be a bit more impatient and do it all in one go.
+
+```{r plot-rolling-mean-2}
+#| fig-height: 6
+#| fig-width: 8
+#| fig-align: "center"
+#| dpi: 144
+
+kwin <- 31
+df_lpr$yhat2 <- c(rep(NA, times = (kwin - 1) / 2), # NA padding in the beginning
+                  rollmean(df_lpr$chal_vote, k = kwin), # actual values
+                  rep(NA, times = (kwin - 1) / 2)) # NA padding at the end
+
+ggplot(data = df_lpr,
+       aes(x = perotvote,
+           y = chal_vote)) +
+    geom_point(size = 1.5,
+               color = "grey60") +
+    labs(x = "Perot vote (%)",
+         y = "Support for challengers (%)") +
+    theme_clean() +
+    geom_line(aes(x = perotvote,
+                  y = yhat2),
+              linewidth = 2,
+              color = "steelblue3") +
+    geom_smooth(method = "lm",
+                se = FALSE,
+                linewidth = 1.5,
+                color = "darkorange3")
+```
+
+It's pretty clear that with a smaller window, the estimates of the mean become more variable. And if we increase the window?
+
+```{r plot-rolling-mean-3}
+#| fig-height: 6
+#| fig-width: 8
+#| fig-align: "center"
+#| dpi: 144
+
+kwin <- 81
+df_lpr$yhat3 <- c(rep(NA, times = (kwin - 1) / 2), # NA padding in the beginning
+                  rollmean(df_lpr$chal_vote, k = kwin), # actual values
+                  rep(NA, times = (kwin - 1) / 2)) # NA padding at the end
+
+ggplot(data = df_lpr,
+       aes(x = perotvote,
+           y = chal_vote)) +
+    geom_point(size = 1.5,
+               color = "grey60") +
+    labs(x = "Perot vote (%)",
+         y = "Support for challengers (%)") +
+    theme_clean() +
+    geom_line(aes(x = perotvote,
+                  y = yhat3),
+              linewidth = 2,
+              color = "steelblue3") +
+    geom_smooth(method = "lm",
+                se = FALSE,
+                linewidth = 1.5,
+                color = "darkorange3")
+
+rm(df_lpr)
+```
+
+
+
+# Kernel smoothing
+
+This adds a weight and a weighting rule to the standard moving average approach. The quick solution to this is the `ksmooth()` function from base **R**.
+
+```{r kernel-smooth-1}
+#| fig-height: 6
+#| fig-width: 8
+#| fig-align: "center"
+#| dpi: 144
+
+kern <- ksmooth(x = df_jacob$perotvote,
+                y = df_jacob$chal_vote,
+                bandwidth = 4)
+
+ggplot(data = df_jacob,
+       aes(x = perotvote,
+           y = chal_vote)) +
+    geom_point(size = 1.5,
+               color = "gray60") +
+    labs(x = "Perot vote (%)",
+         y = "Support for challengers (%)") +
+    theme_clean() +
+    geom_line(data = NULL,
+              aes(x = as.vector(kern$x),
+                  y = as.vector(kern$y)),
+              linewidth = 2,
+              color = "steelblue3")
+```
+
+What if we increase the bandwidth to 10?
+
+```{r kernel-smooth-2}
+#| fig-height: 6
+#| fig-width: 8
+#| fig-align: "center"
+#| dpi: 144
+
+kern <- ksmooth(x = df_jacob$perotvote,
+                y = df_jacob$chal_vote,
+                bandwidth = 10)
+
+ggplot(data = df_jacob,
+       aes(x = perotvote,
+           y = chal_vote)) +
+    geom_point(size = 1.5,
+               color = "gray60") +
+    labs(x = "Perot vote (%)",
+         y = "Support for challengers (%)") +
+    theme_clean() +
+    geom_line(data = NULL,
+              aes(x = kern[[1]],
+                  y = kern[[2]]),
+              linewidth = 2,
+              color = "steelblue3")
+```
+
+
+
+# Polynomial specifications
+
+Moving average approaches or kernel smoothers don't really rely on a statistical specification: they simply compute an average. This has obvious computational benefits, as an average is pretty fast to compute. Nowadays, though, we can easily turn to a regression, as that has slightly more appealing properties.
+
+First, the *loess*.
+
+```{r poly-loess-1}
+#| fig-height: 6
+#| fig-width: 8
+#| fig-align: "center"
+#| dpi: 144
+
+ggplot(data = df_jacob,
+       aes(x = perotvote,
+           y = chal_vote)) +
+    geom_point(size = 1.5,
+               color = "gray60") +
+    labs(x = "Perot vote (%)",
+         y = "Support for challengers (%)") +
+    theme_clean() +
+    geom_smooth(method = "lm",
+                se = FALSE,
+                linewidth = 2,
+                color = "darkorange3") +
+    geom_smooth(method = "loess",
+                se = FALSE,
+                span = 0.3,
+                linewidth = 2,
+                color = "steelblue3")
+```
+
+However, if you want finer control than what is implemented through the `geom_smooth()` function in `ggplot2`, you can use the `loess()` function.
+
+```{r poly-loess-2}
+#| fig-height: 6
+#| fig-width: 8
+#| fig-align: "center"
+#| dpi: 144
+
+lfit1 <- loess(chal_vote ~ perotvote,
+               data = df_jacob,
+               span = 0.3)
+
+ggplot(data = df_jacob,
+       aes(x = perotvote,
+           y = chal_vote)) +
+    geom_point(size = 1.5,
+               color = "gray60") +
+    labs(x = "Perot vote (%)",
+         y = "Support for challengers (%)") +
+    theme_clean() +
+    geom_smooth(method = "loess",
+                se = FALSE,
+                span = 0.3,
+                linewidth = 2,
+                color = "steelblue3") +
+    geom_line(data = NULL,
+              aes(x = df_jacob$perotvote,
+                  y = lfit1$fitted + 1),
+              linewidth = 2,
+              color = "darkorange3")
+```
+
+The plot above just shows you that if you do it from within `geom_smooth()` or with the `loess()` function, it doesn't make a difference.^[I added `+ 1` to the fitted values so that the orange line doesn't perfectly overlap the blue one.]
+
+`loess()` can also do **LOWESS**, as long as you supply a column of weights (usually computed with the tricube kernel). However, there is also a dedicated function in the `stats` package, named `lowess()`.
+
+```{r poly-loess-3}
+#| fig-height: 6
+#| fig-width: 8
+#| fig-align: "center"
+#| dpi: 144
+
+lfit2 <- lowess(x = df_jacob$perotvote,
+                y = df_jacob$chal_vote,
+                f = 0.25)
+
+ggplot(data = df_jacob,
+       aes(x = perotvote,
+           y = chal_vote)) +
+    geom_point(size = 1.5,
+               color = "gray60") +
+    labs(x = "Perot vote (%)",
+         y = "Support for challengers (%)") +
+    theme_clean() +
+    geom_line(data = NULL,
+              aes(x = lfit2$x,
+                  y = lfit2$y),
+              linewidth = 2,
+              color = "steelblue3") +
+    geom_line(data = NULL,
+              aes(x = df_jacob$perotvote,
+                  y = lfit1$fitted),
+              linewidth = 2,
+              color = "darkorange3")
+rm(lfit2)
+```
+
+You can see that the differences between the two are really very small. In practice, most of the times, it will not matter if you use **LOESS** or **LOWESS**.
+
+If you also want standard errors for the **LOESS** fit, that's one extra line of code. If you want to, you can also supply a new data set to the function (if you do not, this function will rely on the original data).
+
+```{r poly-loess-4}
+#| fig-height: 6
+#| fig-width: 8
+#| fig-align: "center"
+#| dpi: 144
+
+pfit1 <- predict(lfit1, # LOESS object
+                 se = TRUE) # standard errors should be computed
+
+ggplot(data = df_jacob,
+       aes(x = perotvote,
+           y = chal_vote)) +
+    geom_point(size = 1.5,
+               color = "gray60") +
+    labs(x = "Perot vote (%)",
+         y = "Support for challengers (%)") +
+    theme_clean() +
+    geom_line(data = NULL,
+              aes(x = df_jacob$perotvote,
+                  y = lfit1$fitted),
+              linewidth = 2,
+              color = "darkorange3") +
+    geom_ribbon(data = NULL,
+                aes(ymin = pfit1$fit - 1.96 * pfit1$se.fit,
+                    ymax = pfit1$fit + 1.96 * pfit1$se.fit),
+                alpha = 0.5,
+                color = "grey80")
+```
+
+You can also test a whether the polynomial specification you've estimated fits the data better than a standard linear model. Here, though, because the model objects are of a different type, the test will have to be done manually.^[Part of the code presented below is adapted from @keele2008.]
+
+We begin by first running two specifications: nonparametric and parametric linear.
+
+```{r compare-poly-1}
+mod.nonpar <- loess(chal_vote ~ perotvote,
+                    span = .5, # span
+                    degree = 2, # maximum degree of the polynomial
+                    data = df_jacob)
+
+mod.par <- lm(chal_vote ~ perotvote,
+              data = df_jacob)
+```
+
+We then compute a few quantities of interest which will go into the statistical test.
+
+```{r compare-poly-2}
+# Residual sum of squares for loess fit
+RSS.npar <- sum(residuals(mod.nonpar) ^ 2)
+#Residual sum of squares for linear model
+RSS.lm <- sum(residuals(mod.par) ^ 2)
+
+mod.df <- mod.nonpar$trace
+res.df <- mod.nonpar$n - mod.df
+```
+
+Finally, we compute the test statistic.^[**2** is used in the formulas because a simple linear regression only estimates 2 parameters: an intercept and a slope).]
+
+```{r compare-poly-3}
+f.2 <- ((RSS.lm - RSS.npar)/(mod.df - 2)) / (RSS.npar/(res.df))
+f.2
+# P-Value
+1 - (pf(f.2, (mod.df - 2) , res.df, lower.tail=TRUE))
+```
+
+
+
+# Splines
+
+We work here with the functions available in the `splines` package.
+
+```{r estimate-spline-1}
+mod.bspline <- lm(chal_vote ~ bs(perotvote, df = 7, intercept = TRUE),
+                  data = df_jacob)
+mod.nspline <- lm(chal_vote ~ ns(perotvote, df = 5, intercept = TRUE),
+                  data = df_jacob)
+
+summary(mod.nspline)
+```
+
+For both functions it's the same number of knots, but the `bs()` function computes $knots = df - 3$, while `ns()` computes them as `knots = df - 1`.
+
+```{r predict-spline-1}
+#| fig-height: 6
+#| fig-width: 8
+#| fig-align: "center"
+#| dpi: 144
+
+sfit.1 <- predict(mod.bspline) # use the original data for prediction
+sfit.2 <- predict(mod.nspline)
+
+ggplot(data = df_jacob,
+       aes(x = perotvote,
+           y = chal_vote)) +
+    geom_point(size = 1.5,
+               color = "gray60") +
+    labs(x = "Perot vote (%)",
+         y = "Support for challengers (%)") +
+    theme_clean() +
+    geom_line(data = NULL,
+              aes(x = df_jacob$perotvote,
+                  y = sfit.1),
+              linewidth = 2,
+              color = "steelblue3") +
+    geom_line(data = NULL,
+              aes(x = df_jacob$perotvote,
+                  y = sfit.2),
+              linewidth = 2,
+              color = "darkorange3")
+```
+
+You can obtain penalized (smoothing) splines with the `smooth.spline()` function from the same `splines` package.^[There should be no `NA`s in either `X` or `Y` for the function to run.]
+
+```{r smooth-spline-1}
+df_smooth1 <- smooth.spline(x = df_jacob$perotvote,
+                            y = df_jacob$chal_vote,
+                            spar = 0.1,
+                            nknots = 4)
+```
+
+`spar` stands for "smoothing parameter" ($\lambda$ will be a function of this parameter).
+
+```{r smooth-spline-2}
+#| fig-height: 6
+#| fig-width: 8
+#| fig-align: "center"
+#| dpi: 144
+
+df_smooth2 <- smooth.spline(x = df_jacob$perotvote,
+                            y = df_jacob$chal_vote,
+                            spar = 0.3,
+                            nknots = 4)
+
+ggplot(data = df_jacob,
+       aes(x = perotvote,
+           y = chal_vote)) +
+    geom_point(size = 1.5,
+               color = "gray60") +
+    labs(x = "Perot vote (%)",
+         y = "Support for challengers (%)") +
+    theme_clean() +
+    geom_line(data = NULL,
+              aes(x = df_smooth1$x,
+                  y = df_smooth1$y),
+              linewidth = 2,
+              color = "steelblue3") +
+    geom_line(data = NULL,
+              aes(x = df_smooth2$x,
+                  y = df_smooth2$y),
+              linewidth = 2,
+              color = "darkorange3")
+```
+
+Increasing the span clearly makes a difference: higher values of the span produce a smoother fit, at the cost of potential bias in the estimate of the relationship.
+
+```{r smooth-spline-3}
+#| fig-height: 6
+#| fig-width: 8
+#| fig-align: "center"
+#| dpi: 144
+
+df_smooth3 <- smooth.spline(x = df_jacob$perotvote,
+                            y = df_jacob$chal_vote,
+                            spar = 0.3,
+                            nknots = 6)
+
+ggplot(data = df_jacob,
+       aes(x = perotvote,
+           y = chal_vote)) +
+    geom_point(size = 1.5,
+               color = "gray60") +
+    labs(x = "Perot vote (%)",
+         y = "Support for challengers (%)") +
+    theme_clean() +
+    geom_line(data = NULL,
+              aes(x = df_smooth2$x,
+                  y = df_smooth2$y),
+              linewidth = 2,
+              color = "steelblue3") +
+    geom_line(data = NULL,
+              aes(x = df_smooth3$x,
+                  y = df_smooth3$y),
+              linewidth = 2,
+              color = "darkorange3")
+rm(df_smooth1, df_smooth2, df_smooth3)
+```
+
+Both number of knots and smoothing parameter control the smoothness of the estimated relationship between the two variables.
+
+# Semiparametric models
+
+In most social science applications, though, we don't deal with bivariate relationships. What we would need is a way to estimate both linear relationships, as well as nonlinear ones, as part of the same model. Semiparametric models are a way to achieve this.
+
+An nice introduction into semiparametric specifications are provided by additive models. These estimate separately, with a smoothing spline, the link between multiple predictors and the the outcome variable. In a sense we have: $Y = \alpha + f_1(X_1) + f_2(X_2)+ \dots + f_k(X_k)$, and each of these `f()` functions are estimated with smoothers.
+
+```{r semiparametric-1}
+gam1 <- gam(chal_vote ~ s(perotvote, bs = "cr") +
+                s(checks_raw, bs = "cr"),
+            data = df_jacob)
+summary(gam1)
+```
+
+`gam()` will estimate the additive model, but we need to specify for each predictor whether we want a simple smoother (`s()`), and what type of smoother that should be (`cr` = *cubic regression*).
+
+For each of the terms in the model, you can obtain a graphical assessment of its effect on the dependent variable.
+
+```{r semi-graphics-1}
+#| fig-height: 6
+#| fig-width: 8
+#| fig-align: "center"
+#| dpi: 144
+
+plot(gam1, select = 1,
+     rug = FALSE, se = TRUE,
+     ylab = "Challengers' Vote Share (%)",
+     xlab = "Vote for Perot (%)",
+     residual = FALSE, bty = "l",
+     shift = 36.4159)
+points(df_jacob$perotvote,
+       df_jacob$chal_vote,
+       pch = ".", cex = 1.75)
+```
+
+```{r semi-graphics-2}
+#| fig-height: 6
+#| fig-width: 8
+#| fig-align: "center"
+#| dpi: 144
+
+plot(gam1, select = 2,
+     rug = FALSE, se = TRUE,
+     ylab = "Challengers' Vote Share (%)",
+     xlab = "Number of overdrafts",
+     residual = FALSE, bty = "l",
+     shift = 36.4159)
+points(df_jacob$checks_raw,
+       df_jacob$chal_vote,
+       pch = ".", cex = 2.75)
+```
+
+If you're not happy with the default plotting style, you can use a custom function to extract the needed quantities from the `gam` output object, and feed them into `ggplot2` functions.
+
+```{r helpful-gg-function}
+fun_gg_gam <- function(model, type = "conditional", res = FALSE,
+                       col.line = "#CD6600", col.point = "#999999",
+                       size.line = 1, size.point = 1) {
+  require(visreg)
+  require(plyr)
+  plotdata <- visreg(model, type = type, plot = FALSE)
+  smooths <- ldply(plotdata, function(part)
+    data.frame(Variable = part$meta$x,
+               x = part$fit[[part$meta$x]],
+               smooth = part$fit$visregFit,
+               lower = part$fit$visregLwr,
+               upper = part$fit$visregUpr))
+  residuals <- ldply(plotdata, function(part)
+    data.frame(Variable = part$meta$x,
+               x = part$res[[part$meta$x]],
+               y = part$res$visregRes))
+  require(ggthemes)
+  if (res)
+    ggplot(smooths,
+           aes(x, smooth)) +
+        geom_line(col = col.line,
+                  linewidth = size.line) +
+        geom_line(aes(y = lower),
+                  linetype="dashed",
+                  col = col.line,
+                  linewidth = size.line) +
+        geom_line(aes(y = upper),
+                  linetype = "dashed",
+                  col = col.line,
+                  linewidth = size.line) +
+        geom_point(data = residuals,
+                   aes(x, y),
+                   col = col.point,
+                   size = size.point) +
+        facet_grid(. ~ Variable, scales = "free_x") +
+        theme_clean()
+  else
+    ggplot(smooths,
+           aes(x, smooth)) +
+        geom_line(col = col.line,
+                  linewidth = size.line) +
+        geom_line(aes(y = lower),
+                  linetype = "dashed",
+                  col = col.line,
+                  linewidth = size.line) +
+        geom_line(aes(y = upper),
+                  linetype = "dashed",
+                  col = col.line,
+                  linewidth = size.line) +
+        facet_grid(. ~ Variable, scales = "free_x") +
+        theme_clean()
+  }
+```
+
+```{r semi-graphics-3}
+#| fig-height: 6
+#| fig-width: 16
+#| fig-align: "center"
+#| dpi: 144
+
+fun_gg_gam(gam1,
+           res = TRUE) # plot the points as well
+```
+
+You can also run diagnostics on the model results. The assumptions still are that the residuals are centered around 0 and that their variance is constant.
+
+```{r semiparametric-2}
+#| fig-height: 6
+#| fig-width: 8
+#| fig-align: "center"
+#| dpi: 144
+
+gam.check(gam1)
+```
+
+Finally, you can check whether your additive model fit with splines does better than a simple linear specification.
+
+```{r semiparametric-3}
+gam2 <- gam(chal_vote ~ perotvote + checks_raw,
+            data = df_jacob)
+
+anova(gam2, gam1, test = "Chisq")
+```
+
+Semiparametric models can be run with exactly the same function as additive models, just that some of the predictors will enter the specification in the same way as they do for a standard linear model.
+
+Here's a comparison between an OLS estimated with the `gam()` function, and a proper semiparametric model.
+
+```{r semiparametric-4}
+fullols <- gam(chal_vote ~ exp_chal + chal_spend + inc_spend +
+                   pres_vote + logchecks1 + marginal +
+                   partisan_redist + perotvote,
+               data = df_jacob)
+
+fullsemi <- gam(chal_vote ~ exp_chal + s(chal_spend, bs = "cr") +
+                    s(inc_spend, bs = "cr") + s(pres_vote, bs = "cr") +
+                    logchecks1 + marginal + partisan_redist + perotvote,
+                data = df_jacob)
+
+summary(fullsemi)
+```
+
+A couple of important points here:
+
+1. The $R^2$ is interpreted in the same way as for a linear regression. The "Scale est." is the variance of the residual.
+2. You also get significance of the smooth terms, but these *p*-values are approximate, as the output indicates.
+
+For the linear terms, the results are provided in the output. For the smoothers, you will have to plot.
+
+```{r semiparametric-5}
+#| fig-height: 6
+#| fig-width: 8
+#| fig-align: "center"
+#| dpi: 144
+
+plot(fullsemi, select = 1,
+     rug = FALSE, se = TRUE,
+     ylab = "Challengers' Vote Share (%)",
+     xlab = "Challenger spending in campaign",
+     residual = FALSE, bty = "l",
+     shift = 32.3882)
+points(df_jacob$chal_spend,
+       df_jacob$chal_vote,
+       pch = ".", cex = 3.75)
+```
+
+# Package versions
+
+Package versions used in this script.
+
+```{r package-versions}
+sessionInfo()
+```

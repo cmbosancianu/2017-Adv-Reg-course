@@ -1,0 +1,186 @@
+---
+title: "Bonus Code: Day 5"
+author:
+  name: "Constantin Manuel Bosancianu"
+  orcid: 0000-0001-7950-9798
+  email: bosancianu@icloud.com
+date: "August 4, 2017"
+execute:
+  eval: true
+  echo: true
+  warning: false
+  error: false
+bibliography: ../Bibliography.bib
+format:
+  html:
+    toc: true
+    code-fold: true
+    toc-location: left
+    theme: minty
+    number-sections: true
+    reference-location: margin
+    embed-resources: true
+---
+
+# Introduction
+
+I show here a small implementation of code for multilevel models. The data comes from the *World Values Surveys* series.
+
+```{r load-packages}
+library(pacman)
+p_load(readstata13, tidyverse, foreign, texreg, knitr, kableExtra,
+       magrittr, ggthemes, effects, arm, lmtest, ggthemes, interplot)
+```
+
+```{r read-data}
+df_wvs <- readRDS(file = "../02-data/19-wvs.rds")
+
+df_wvs %>%
+    glimpse()
+```
+
+The outcome used in this analysis is an index of obedience-vs-emancipative values.^[Detailed information on how this index was created from variables available in the WVS can be found [here](https://www.worldvaluessurvey.org/WVSContents.jsp?CMSID=welzelidx&CMSID=welzelidx).]
+
+
+# Pooling vs. no pooling approach
+
+```{r pool-no-pool, results='asis'}
+model.1 <- lm(obedeman ~ age + income + gender + educat, data = df_wvs)
+model.2 <- lm(obedeman ~ age + income + gender + educat + as.factor(country),
+              data = df_wvs)
+
+htmlreg(list(model.1, model.2),
+        digits = 3,
+        custom.model.names = c("No dummies", "Dummies (ref. Algeria)"))
+```
+
+```{r check-heteroskedasticity}
+bptest(model.1)
+
+rm(model.1, model.2)
+```
+
+# Country-by-country differences
+
+```{r country-differences}
+model31 <- lm(obedeman ~ age + income + gender + educat, data = filter(df_wvs,
+              country == "Algeria"))
+model32 <- lm(obedeman ~ age + income + gender + educat, data = filter(df_wvs,
+              country == "Argentina"))
+model33 <- lm(obedeman ~ age + income + gender + educat, data = filter(df_wvs,
+              country == "Armenia"))
+model34 <- lm(obedeman ~ age + income + gender + educat, data = filter(df_wvs,
+              country == "Australia"))
+model35 <- lm(obedeman ~ age + income + gender + educat, data = filter(df_wvs,
+              country == "Azerbaijan"))
+
+htmlreg(list(model31, model32, model33, model34, model35),
+        digits = 3,
+        custom.model.names = c("Algeria", "Argentina", "Armenia",
+                               "Australia", "Azerbaijan"),
+        custom.coef.names = c("(Intercept)", "Age", "Income",
+                              "Gender (female)", "Education"))
+
+rm(model31, model32, model33, model34, model35)
+```
+
+# Multilevel specification
+
+Recoding done to improve the convergence. It won't affect the significance of the coefficients, although the interpretation of the slopes changes a bit, as now units are expressed in 1000s (in the case of GDP per capita).
+
+## Initial specification
+
+```{r rescaling-predictors}
+df_wvs %<>%
+    mutate(gdpc = gdpc / 1000,
+           ginisolt = ginisolt / 10,
+           age = age / 10)
+```
+
+```{r mlm-1}
+model.1 <- lmer(obedeman ~ age + income + educat + gender + gdpc +
+                    ginisolt + polity2 + (1 | country),
+                data = df_wvs,
+                na.action = na.omit)
+summary(model.1)
+```
+
+You can easily extract quantities of interest.
+
+```{r qoi}
+fixef(model.1)
+ranef(model.1)
+se.fixef(model.1)
+se.ranef(model.1)
+```
+
+## Centering predictors
+
+Needed at all times, for both level 1 and level 2 predictors.^[See why [here](https://citeseerx.ist.psu.edu/document?repid=rep1&type=pdf&doi=fe8d7d6a61d067491d222af2abd836ae23672ef3).] Especially important here, given that we're investigating an interaction.
+
+Though we could easily use a custom function for this, `arm` comes already with a `rescale()` function for exactly this purpose.
+
+```{r centering-predictors-1}
+df_wvs %<>%
+    group_by(country) %>%
+    mutate(educ_cwc = arm::rescale(educat),
+           age_cwc = arm::rescale(age),
+           inc_cwc = arm::rescale(income),
+           gen_cwc = arm::rescale(gender)) %>%
+    ungroup() %>%
+    dplyr::select(-c(educat, age, income, gender))
+```
+
+```{r center-predictors-2}
+df_agg <- df_wvs %>%
+    group_by(country) %>%
+    summarise(gdpc = mean(gdpc, na.rm = TRUE),
+              gini = mean(ginisolt, na.rm = TRUE),
+              polity = mean(polity2, na.rm = TRUE)) %>%
+    ungroup() %>%
+    mutate(gdpc_cgm = arm::rescale(gdpc),
+           gini_cgm = arm::rescale(gini),
+           polity_cgm = arm::rescale(polity)) %>%
+    dplyr::select(-c(gdpc, gini, polity))
+
+# Merge the two data sets
+df_wvs <- left_join(df_wvs, df_agg,
+                    by = "country") %>%
+    dplyr::select(-c(gdpc, ginisolt, polity2))
+```
+
+## Cross-level interactions
+
+Although it's not immediately visible from this form of the model, here GDP/capita is added as a predictor of the slope of education, leading to the cross-level interaction you see here.
+
+```{r mlm-2}
+model.2 <- lmer(obedeman ~ age_cwc + inc_cwc + educ_cwc + gen_cwc +
+                    gdpc_cgm + gini_cgm + polity_cgm + educ_cwc * gdpc_cgm +
+                    (1 + educ_cwc | country),
+                data = df_wvs,
+                na.action = na.omit)
+summary(model.2)
+```
+
+```{r plot-interaction}
+#| fig-height: 6
+#| fig-width: 8
+#| fig-align: "center"
+#| dpi: 144
+
+interplot(model.2,
+          var1 = "educ_cwc",
+          var2 = "gdpc_cgm",
+          hist = TRUE) +
+    xlab("Centered GDP per capita") +
+    ylab("Effect of education on obedience/emancipation") +
+    theme_wsj()
+```
+
+# Package versions
+
+Package versions used in this script.
+
+```{r package-versions}
+sessionInfo()
+```

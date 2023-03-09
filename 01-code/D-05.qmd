@@ -1,0 +1,458 @@
+---
+title: "Practice Code: Day 5"
+author:
+  name: "Constantin Manuel Bosancianu"
+  orcid: 0000-0001-7950-9798
+  email: bosancianu@icloud.com
+date: "August 4, 2017"
+execute:
+  eval: true
+  echo: true
+  warning: false
+  error: false
+bibliography: ../Bibliography.bib
+format:
+  html:
+    toc: true
+    code-fold: true
+    toc-location: left
+    theme: minty
+    number-sections: true
+    reference-location: margin
+    embed-resources: true
+---
+
+```{r load-packages}
+library(pacman)
+p_load(readstata13, tidyverse, foreign, texreg, knitr, kableExtra,
+       magrittr, ggthemes, effects, interplot, boot, quantreg, car,
+       MASS)
+
+options(scipen = 8) # Avoid scientific notation for coefficients
+
+set.seed(437853) # set random seed
+```
+
+We define a function for centering and standardization.^[It will come in handy when we have a model with predictors measured on scales with vastly different ranges (like below).]
+
+```{r helpful-functions}
+fun_std_cent <- function(x) {
+    (x - mean(x, na.rm = TRUE)) / (2 * sd(x, na.rm = TRUE))
+}
+```
+
+# Robust regression
+
+The data used today comes from a study of income inequality and attitudes toward pay inequality. A question in the WVS surveys asks respondents their opinion on a matter of fair pay. The hypothetical case of 2 secretaries is offered: both have the same responsibilities and working hours, yet one of them is more reliable when doing the job, more efficient, as well as faster. Is it fair that the more efficient secretary gets paid more? The respondents could only choose between "Fair" (0) and "Not fair" (1). Higher values on this item, then, denote preference for equality of pay even in the face of differences of abilities.
+
+The following variables are present in the data:
+
+1. `diffpay`: the attitude toward equality of pay
+2. `gini`: Gini index of net income inequality (0-100)
+3. `gdpcap`: GDP per capita
+4. `demo`: country was democratic for at least 10 years around the mid-1990s.
+
+**Question**: Is it a good strategy to use the mean as a dependent variable in this case? Could you do the same with other characteristics of the distribution of the attitude, maybe like the skewness or kurtosis?
+
+For now, we're only interested in understanding the determinants of this attitude in new democracies.
+
+```{r read-data-1}
+df_pay <- read.spss(file = "../02-data/17-Ineq-pay.sav",
+                    to.data.frame = TRUE,
+                    use.value.labels = FALSE)
+
+df_pay %<>%
+    mutate(country = str_trim(country)) %>%
+    filter(demo == 0)
+```
+
+The relationship we're interested in describing.
+
+```{r examine-data-1}
+#| fig-height: 6
+#| fig-width: 8
+#| fig-align: "center"
+#| dpi: 144
+
+ggplot(df_pay,
+       aes(x = diffpay)) +
+    geom_histogram() +
+    labs(x = "% supportive of pay equality",
+         y = "Count") +
+    theme_clean()
+```
+
+Which are the two cases with such extreme values?
+
+```{r examine-data-2}
+#| fig-height: 6
+#| fig-width: 8
+#| fig-align: "center"
+#| dpi: 144
+
+ggplot(df_pay,
+       aes(x = gini,
+           y = diffpay)) +
+    geom_point(size = 2) +
+    geom_text(aes(label = country)) +
+    labs(x = "Gini",
+         y = "% supportive of pay equality") +
+    theme_clean()
+```
+
+If you want to explore some of the other theme options in `ggthemes`, also try `theme_stata()`, `theme_wsj()`,
+`theme_tufte()`, `theme_solarized()`, or `theme_fivethirtyeight()`.
+
+What would a regression tell us? Before running it, center and standardize the variables a bit, so as to get better looking coefficients.
+
+```{r clean-data-1}
+df_pay %<>%
+    mutate(gini_cent = fun_std_cent(gini),
+           gdp_cap_cent = fun_std_cent(gdpcap))
+```
+
+## Initial specification
+
+```{r initial-model}
+model1 <- lm(diffpay ~ gini_cent + gdp_cap_cent,
+             data = df_pay)
+summary(model1)
+```
+
+## Regression assumptions
+
+Assess leverage of observations.
+
+```{r reg-assumptions-1}
+#| fig-height: 6
+#| fig-width: 8
+#| fig-align: "center"
+#| dpi: 144
+
+df_pay$hatv <- hatvalues(model1)
+
+plot(hatvalues(model1),
+     main = "Hat values for model of pay equality attitudes",
+     id = list(method = "identify"))
+abline(h = c(2, 3) * 3 / length(df_pay$country), lty = 2)
+identify(1:length(df_pay$country),
+         hatvalues(model1),
+         df_pay$country)
+```
+
+Average hat value is $\frac{k+1}{n}$, which is why for me it is `3 / length(df_pay$country)`.
+
+Though you won't see them in the `HTML` version of the tutorial, the `identify()` function will wait for you to click on the cases you want to have labels for. The 3 cases with hat values larger than 0.2 are Brazil, Chile, and Slovenia.
+
+Assess outliers.
+
+```{r reg-assumptions-2}
+outlierTest(model1)
+```
+
+```{r reg-assumptions-3}
+df_pay[rownames(df_pay) == 20, ]
+```
+
+So, Brazil, Chile and Slovenia clear have high leverage, while Slovakia is clearly an outlier.
+
+Assess influence with a bubble plot, which combines hat values, with studentized residuals, and with Cook's *D*.
+
+```{r reg-assumptions-4}
+influencePlot(model1,
+              xlab = "Hat-values",
+              ylab = "Studentized residuals",
+              id.n = 0)
+```
+
+Slovenia, Czech Republic, Brazil, and Slovakia clearly have high influence on the final regression coefficients.
+
+```{r trim-sample}
+df_pay_sub <- df_pay %>%
+    filter(!(country %in% c("Brazil", "Czech Republic", "Slovenia",
+                            "Slovakia")))
+
+model1trim <- lm(diffpay ~ gini_cent + gdp_cap_cent,
+                 data = df_pay_sub)
+summary(model1trim)
+```
+
+Losing 4 countries out of 26 is a steep price to pay, though: that's 15% of the sample. It's possible that managing to save them may even make the effect of GDP per capita significant at an acceptable 90% level (acceptable given the sample size we're working with). Could some of the robust methods of estimation which we learned earlier help?
+
+## Measures of location
+
+Here are a few of those alternative measures of location. The first is the mean of the outcome with Czech Republic and Slovakia included, and the second is this mean without the two countries.
+
+```{r helpful-robust-functions-1}
+# Mean deviation from the mean
+MDmean <- function(x){
+    mean(abs(x - mean(x)))
+}
+
+# Median deviation from the mean
+MDM <- function(x){
+    median(abs(x - mean(x)))
+}
+
+# Median absolute deviation
+MAD <- function(x){
+    median(abs(x - median(x)))
+}
+```
+
+```{r outcome-mean-1}
+mean(df_pay$diffpay) # Mean with CZE and SVK
+
+mean(filter(df_pay, !(country %in%
+    c("Czech Republic", "Slovakia")))$diffpay) # Mean without CZE and SVK
+```
+
+Robust measures of location for out outcome.
+
+```{r outcome-mean-2}
+MDmean(df_pay$diffpay) # Mean deviation from the mean
+MDM(df_pay$diffpay) # Median deviation from the mean
+MAD(df_pay$diffpay) # Median absolute deviation
+```
+
+## M- and MM-estimation
+
+Here we rely on the `rlm()` function from the `MASS` package.
+
+```{r m-estimation-1}
+model2m <- rlm(diffpay ~ gini_cent + gdp_cap_cent,
+               data = df_pay,
+               method = "M")
+summary(model2m)
+```
+
+```{r m-estimation-2}
+model2mm <- rlm(diffpay ~ gini_cent + gdp_cap_cent,
+                data = df_pay,
+                method = "MM",
+                psi = psi.huber(u, k = 1.345, deriv = 0))
+summary(model2mm)
+```
+
+Inspect what's happening here, by creating a data frame to look at the weights.
+
+```{r m-estimation-weights, results='asis'}
+payweight <- data.frame(country = df_pay$country,
+                        resid = model2mm$resid,
+                        weight = model2mm$w)
+
+payweight %>%
+    arrange(weight) %>%
+    kable(digits = 3,
+          caption = "Weights for individual observation from the MM procedure",
+          caption.above = TRUE,
+          col.names = c("Country", "Residual", "Weight")) %>%
+    kable_styling(full_width = TRUE)
+```
+
+You can notice here how the weighting went: cases with larger absolute residuals got downweighted.
+
+What about model fit? The code below is based on [this](https://stats.stackexchange.com/questions/83826/is-a-weighted-r2-in-robust-linear-model-meaningful-for-goodness-of-fit-analys) answer, as well as on the suggestions provided by @willett_another_1988.
+
+```{r helpful-robust-functions-2}
+r2ww <- function(x){
+  SSe <- sum((x$w * x$resid)^2) #the residual sum of squares is weighted
+  observed <- x$resid + x$fitted
+  SSt <- sum((x$w * observed - mean(x$w * observed))^2) #the total sum of squares is weighted
+  value <- 1 - SSe / SSt
+  return(value)
+}
+```
+
+```{r m-estimation-fit}
+r2ww(model2mm)
+```
+
+An additional function gives us bootstrapped standard errors for our model estimates.
+
+```{r helpful-robust-functions-3}
+boot.mm.fixed <- function(data, indices, maxit = 20){
+     fit <- fitted(model2mm)
+     e <- residuals(model2mm)
+     X <- model.matrix(model2mm)
+     y <- fit + e[indices]
+     mod <- rlm(y ~ -1 + X, maxit = maxit)
+     coefficients(mod)
+}
+```
+
+The third column of the output provides the bootstrapped standard errors.
+
+```{r m-estimation-3}
+model2.mm.fixed <- boot(df_pay,
+                        boot.mm.fixed,
+                        R = 1000,
+                        maxit = 100)
+print(model2.mm.fixed)
+```
+
+
+
+
+# Quantile regression
+
+A very small example for quantile regression comes from a data set of 200 high school students, measured on reading, writing, math, science, and abilities for social sciences. We have information on their gender, race, SES (3 categories), whether they go to a public or private school, and the type of program they are enrolled in (general, academic, or vocational).
+
+A small codebook:
+
+1. `female`: Gender (1 = female)
+2. `race`: Race (1 = hispanic, 2 = asian, 3 = african-american, 4 = caucasian)
+3. `ses`: Socio-economic status (1 = low, 2 = middle, 3=high)
+4. `schtyp`: School type (1 = public, 2 = private)
+5. `prog`: type of program (1 = general, 2 = academic, 3 = vocational)
+
+```{r read-data-2}
+df_hs <- read.spss(file = "../02-data/18-High-school.sav",
+                   to.data.frame = TRUE,
+                   use.value.labels = FALSE)
+
+df_hs %>%
+    glimpse()
+```
+
+## Examine distributions
+
+How do the quantiles look for the two gender groups?
+
+```{r quantile-comparison-1, results='asis'}
+df_hs %>%
+    group_by(female) %>%
+    summarise(Q25 = quantile(write, probs = 0.25),
+              Q50 = quantile(write, probs = 0.50),
+              Q75 = quantile(write, probs = 0.75)) %>%
+    mutate(female = if_else(female == 1, "Women", "Men")) %>%
+    kable(digits = 0,
+          caption = "Distribution of scores in writing for women and men",
+          caption.above = TRUE,
+          col.names = c("Gender", "25%", "Median (50%)", "75%")) %>%
+    kable_styling(full_width = TRUE)
+```
+
+How do the quantiles look for the entire population?
+
+```{r quantile-comparison-2}
+quantile(df_hs$write, probs = seq(0, 1, 0.25))
+```
+
+
+## Initial model
+
+The first model that you could try is to predict just the median of score in writing. We use for this the `rq()` function from the `quantreg` package.
+
+```{r quantile-reg-1}
+modelnull <- rq(write ~ 1,
+                tau = 0.5,
+                data = df_hs)
+summary(modelnull)
+```
+
+Can you venture a guess as to why there is a warning? Even with the warning, it's not a problem in this instance.
+
+```{r quantile-reg-2}
+modelnull <- rq(write ~ 1,
+                tau = 0.75,
+                data = df_hs)
+summary(modelnull, se = "boot") # Obtain bootstrapped SEs
+```
+
+## More complex specification
+
+Add gender as a predictor.
+
+```{r quantile-reg-3}
+model1 <- rq(write ~ female,
+             tau = 0.50,
+             data = df_hs)
+summary(model1, se = "boot")
+```
+
+The "Intercept" represents the expected median test score for a male student, while the coefficient for the dummy indicator is the difference in median test scores between men and women.
+
+## Model fit
+
+$R^2$ doesn't really exist for these models. What we have is an approximation to the $R^2$ (pseudo), which we can compute for 2 models. To compute this, I will have to re-estimate the null model for the 50th percentile.
+
+```{r quantile-reg-4}
+modelnull <- rq(write ~ 1,
+                tau = 0.50,
+                data = df_hs)
+```
+
+```{r helpful-quantile-function}
+rho <- function(u, tau = 0.5) {
+    u * (tau - (u < 0))
+}
+```
+
+```{r quantile-model-fit-1}
+V0 <- sum(rho(modelnull$resid, modelnull$tau)) # for the restricted model
+V1 <- sum(rho(model1$resid, model1$tau)) # for the full model
+```
+
+The pseudo $R^2$ is a simple function of these two quantities.^[The author of the package doesn't like it, which is why it's not implemented through a function.] Even this approximate measure doesn't really behave like an $R^2$. All it does is measure goodness of fit by comparing the sum of weighted deviations for the model of interest with the same sum from a model in which only the intercept appears.
+
+```{r quantile-model-fit-2}
+1 - V1 / V0
+```
+
+What if we add more predictors?
+
+```{r quantile-reg-5}
+model2 <- rq(write ~ female + socst,
+             tau = 0.50,
+             data = df_hs)
+summary(model2, se = "boot")
+```
+
+How would you interpret the results?
+
+## Final specification
+
+What if we wanted more quantiles, though, at the same time?
+
+```{r quantile-reg-6}
+model3 <- rq(write ~ female + socst,
+             tau = c(0.25, 0.5, 0.75),
+             data = df_hs)
+summary(model3, se = "boot")
+```
+
+We can also display the estimated effects graphically. For example, plot the effect of social sciences ability.
+
+```{r plot-quantile}
+#| fig-height: 6
+#| fig-width: 8
+#| fig-align: "center"
+#| dpi: 144
+
+plot(summary(model3),
+     parm = "socst")
+```
+
+The red line is the OLS estimate, and the dashed red lines are the confidence intervals for this OLS estimate.
+
+The robustness to outliers is clear - let's pretend that we increase a writing score 10 times!
+
+```{r proven-robustness-1}
+df_hs$write[df_hs$write == 67] <- 670
+```
+
+```{r proven-robustness-2}
+model3 <- rq(write ~ female + socst,
+             tau = c(0.25, 0.5, 0.75),
+             data = df_hs)
+summary(model3, se = "boot")
+```
+
+# Package versions
+
+Package versions used in this script.
+
+```{r package-versions}
+sessionInfo()
+```

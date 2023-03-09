@@ -1,0 +1,494 @@
+---
+title: "Practice Code: Day 3"
+author:
+  name: "Constantin Manuel Bosancianu"
+  orcid: 0000-0001-7950-9798
+  email: bosancianu@icloud.com
+date: "August 2, 2017"
+execute:
+  eval: true
+  echo: true
+  warning: false
+  error: false
+bibliography: ../Bibliography.bib
+format:
+  html:
+    toc: true
+    code-fold: true
+    toc-location: left
+    theme: minty
+    number-sections: true
+    reference-location: margin
+    embed-resources: true
+---
+
+```{r load-packages}
+library(pacman)
+p_load(readstata13, tidyverse, lmtest, MASS, car, texreg, knitr,
+       kableExtra, magrittr, ggthemes, effects, interplot, sandwich)
+
+options(scipen = 16) # Avoid scientific notation for coefficients
+```
+
+```{r helpful-functions}
+fun_cent <- function(x) {
+    x - mean(x, na.rm = TRUE)
+}
+```
+
+# Fixed effects
+
+The first data set from today comes from a mid-1990s study of what influences the vote for extreme right parties [@jackman_conditions_1996]. It was extremely relevant even back then, with the surprising electoral success of organizations like the National Front in France in the late 1980s, or the Vlaams Blok in Belgium in the early 1990s. It is particularly relevant today as well.
+
+```{r read-data-1}
+df_er <- read.dta13(file = "../02-data/15-JV-data.dta",
+                    convert.factors = FALSE)
+```
+
+```{r examine-data-1}
+df_er %>%
+    glimpse()
+```
+
+## Codebook
+
+The most important variables are:
+
+1. `country`: country name
+2. `year`: election year
+3. `lerps`: logarithm of extreme right party electoral score
+4. `erps`: extreme right party electoral score
+5. `unemp`: unemployment rate
+6. `enp`: effective number of parties
+7. `thresh`: electoral threshold
+
+A full codebook is available in the `07-docs` subfolder.
+
+The original analysis rightly uses `lerps` as dependent variable, and an estimation procedure that is far more suitable to data that is expressed as a percentage (tobit). I avoid both of these for 2 reasons. Using the (natural logarithm) of electoral score means that the regression coefficients are much harder to interpret. Second, the results from a tobit and a OLS estimation are substantively similar, but OLS has a much simpler interpretation for the coefficients. Just to be clear, though, this dependent variable should not be analyzed with OLS for any substantive purpose, such as sending it to a conference panel or a journal.
+
+## First specification
+
+```{r standard-specification}
+model1 <- lm(erps ~ unemp + enp + thresh,
+             na.action = na.omit,
+             data = df_er)
+summary(model1)
+```
+
+How to interpret the effect of unemployment? What about the electoral threshold? (let's not bother now with the intercept, as it clearly won't make sense with the variables coded like they are now)
+
+We ought to remember, though, that our data is clustered: multiple elections come from the same country. This means that even though **R** is computing SEs based on a sample size of 102, the true number of "independent" pieces of information is lower. Because of this, we might have *heteroskedasticity* in the data.
+
+```{r breusch-pagan-1}
+bptest(model1)
+```
+
+We can also think of a variety of factors that don't change over time, and that might shape the vote for extreme right parties. These factors might be connected to the institutional environment, or countries' immigration regime.
+
+## Fixed-effects approach
+
+In this case, maybe a fixed-effects approach could work. Easy recoding can be performed with the functions available in the `dplyr` package.
+
+```{r clean-data-1}
+df_er %<>%
+    group_by(country) %>%
+    mutate(erps_cwc = fun_cent(erps),
+           unemp_cwc= fun_cent(unemp),
+           enp_cwc = fun_cent(enp),
+           thresh_cwc = fun_cent(thresh))
+```
+
+```{r fe-approach-demean}
+model2 <- lm(erps_cwc ~ unemp_cwc + enp_cwc + thresh_cwc,
+             data = df_er)
+summary(model2)
+```
+
+However, although this likely addressed the concerns of omitted variable bias, it didn't solve the heteroskedasticity problems. In this case, we might just want to continue with a HC approach.
+
+```{r hc-correction}
+model2$newse <- vcovHC(model2,
+                       method = "white1",
+                       type = "HC0")
+
+coeftest(model2,
+         model2$newse)
+```
+
+A slightly bigger question is what exactly do these SEs mean, when we're operating with all elections in those countries in the time period studied?
+
+## LSDV approach
+
+The alternative to FEs is to go for the **LSDV** approach. I will show you how the code works for this, but in this specific instance, I would not advise it. This is because we are operating with a very reduced sample of only 102 elections. Estimating a lot of parameters for dummy variables with such a small sample is always risky.
+
+```{r lsdv-approach}
+model3 <- lm(erps ~ unemp + enp + thresh_cwc + as.factor(country),
+             data = df_er)
+summary(model3)
+```
+
+## FD approach
+
+The final approach, which I would encourage here, is computing first differences (**FD**), as there might even be correlation over time. This is explaining a different phenomenon, though: the change from election to election in the electoral fortunes of extreme right parties.
+
+I first arrange rows by country, and then by year, in ascending order. After this, I clean up the data set a bit by removing unnecessary variables. Finally, I compute lagged versions of the variables, and subtract these from the original versions of the variables to produce *first differences*.
+
+```{r fd-approach-1}
+df_er %<>%
+    arrange(country, year) %>%
+    dplyr::select(-c(austria:unitedkingdom, erps_cwc:thresh_cwc)) %>%
+    group_by(country) %>%
+    mutate(l_erps = lag(erps),
+           l_unemp = lag(unemp),
+           l_enp = lag(enp),
+           l_thresh = lag(thresh)) %>%
+    ungroup() %>%
+    mutate(fd_erps = erps - l_erps,
+           fd_unemp = unemp - l_unemp,
+           fd_enp = enp - l_enp,
+           fd_thresh = thresh - l_thresh) %>%
+    dplyr::select(-c(l_erps:l_thresh))
+```
+
+```{r fd-approach-2}
+model4 <- lm(fd_erps ~ fd_unemp + fd_enp + fd_thresh,
+             data = df_er)
+
+summary(model4)
+```
+
+Why is this happening? Which solution would you select in the end?
+
+
+
+
+# First interaction practice
+
+The second data set for today, was obtained from Round 7 of the European Social Survey. The data refers to Great Britain, and was collected in 2014. As the data is in **CSV** format, we will have to work with the codebook (located in the `07-docs` folder).
+
+```{r read-data-2}
+df_uk <- read.csv(file = "../02-data/16-Practice-data-ess.csv",
+                  header = TRUE)
+```
+
+Now, before we start, it is only fair to say that the most proper model for this data is not a linear regression, but rather an ordered logit. This would treat the measurement scale of satisfaction with democracy as a proper set of 11 categories, arranged in order of intensity, and not as a continuous scale (where any value between 0 and 10 is possible). The dangers in using a linear regression on such a 0-10 ordered scale are that predictions frequently fall in between adjacent categories (e.g., 3.675), or that predictions might fall outside of the bounds of the scale (e.g., 12). Nevertheless, I will use such a model for this dependent variable. There are two main reasons for this. For one, you frequently encounter such models being used for ordinal data in applied work, so it's worthwhile to show an example. Second, very frequently the substantive results from a linear model will be very similar to those obtained with a ordered logit. In this sense, then, we are not abusing the data as much as would seem at first glance. Even so, I'd like to stress this once more: the most appropriate model for this dependent variable is an ordered logit.^[If we are being honest, there are not that many variables in voting behavior that are truly continuous, and therefore suitable for a linear model estimated with OLS.]
+
+## Examine data
+
+Is there a connection between the satisfaction with democracy and income?
+
+```{r examine-data-2}
+#| fig-height: 6
+#| fig-width: 8
+#| fig-align: "center"
+#| dpi: 144
+
+ggplot(df_uk,
+       aes(x = hinctnta,
+           y = stfdem)) +
+    geom_point(size = 2) +
+    geom_jitter() +
+    labs(x = "Household net income",
+         y = "Satisfaction with democracy") +
+    theme_clean()
+```
+
+Unfortunately, scatterplots aren't very useful in this case. Even with the jittering function, they can't really show whether there is a relationship between the two variables. This is a standard occurrence when using ordered data with a limited number of categories.
+
+A much more useful approach is to simply compute a mean of satisfaction with democracy for each level of income of our respondents. That ought to give us a rough idea whether higher income is associated with a higher level of satisfaction.
+
+```{r examine-data-3, results='asis'}
+df_uk %>%
+    group_by(hinctnta) %>%
+    summarise(stf = mean(stfdem, na.rm = TRUE)) %>%
+    na.omit() %>%
+    kable(digits = 2,
+          caption = "Average satisfaction by income group",
+          caption.above = TRUE,
+          col.names = c("Income group", "Sat. with democracy")) %>%
+    kable_styling(full_width = TRUE)
+```
+
+Aside for some slight deviations, there seems to be a positive relationship between the two. As income increases, so does satisfaction with democracy.
+
+With education it will be slightly more difficult to spot the trend, as we have 31 categories. I will collapse them into 6, so as to make the pattern clearer.
+
+```{r clean-data-2}
+df_uk %<>%
+    mutate(educ06 = case_when(eduyrs <= 5 ~ 1,
+                              eduyrs > 5 & eduyrs <= 10 ~ 2,
+                              eduyrs > 10 & eduyrs <= 15 ~ 3,
+                              eduyrs > 15 & eduyrs <= 20 ~ 4,
+                              eduyrs > 20 & eduyrs <= 25 ~ 5,
+                              eduyrs > 25 ~ 6))
+```
+
+```{r examine-data-4, results='asis'}
+df_uk %>%
+    group_by(educ06) %>%
+    summarise(stf = mean(stfdem, na.rm = TRUE)) %>%
+    na.omit() %>%
+    kable(digits = 2,
+          caption = "Average satisfaction by education group",
+          caption.above = TRUE,
+          col.names = c("Education group", "Sat. with democracy")) %>%
+    kable_styling(full_width = TRUE)
+```
+
+There also seems to be a positive relationship between these two variables. How is the correlation between these two predictors (education and income)?
+
+```{r correlation-edu-inc}
+cor(df_uk$eduyrs, df_uk$hinctnta,
+    use = "complete.obs",
+    method = "spearman") # Spearman's rho, because they are ordinal
+```
+
+## Initial specification
+
+Before starting with the model, I will listwise delete all observations with missing information on any of the variables. This is so as to make sure that all models are estimated on exactly the same sample. I will also rescale income, so as to obtain a meaningful intercept.
+
+```{r interaction-1}
+df_uk %<>%
+    na.omit() %>%
+    mutate(hinctnta = hinctnta - 1)
+
+model1 <- lm(stfdem ~ male + age15 + hinctnta + eduyrs +
+                 mbtru + ppltrst,
+             data = df_uk)
+
+summary(model1)
+```
+
+Things look very encouraging, although the $R^2$ is underwhelming. Is the effect of education the same for both genders? Before including the interaction that tries to test this, let's center the predictor for education. Instead of adopting the standard "subtracting the mean" approach, I will just use the median, which was 13.
+
+```{r clean-data-3}
+df_uk %<>%
+    mutate(edu_scale = eduyrs - 13)
+```
+
+```{r interaction-2}
+model2 <- lm(stfdem ~ male + age15 + hinctnta + edu_scale +
+                 mbtru + ppltrst + male * edu_scale,
+             data = df_uk)
+
+summary(model2)
+```
+
+It turns out that it's not. Questions:
+
+1. How do you interpret the effect of gender?
+2. How do you interpret the effect of education?
+3. How do you interpret the effect of the interaction term?
+
+## Graphical display
+
+In this case it's fairly easy to interpret the effect from the table of results itself. In other cases, though, it's not that easy. This is why the preferred way of presenting these results is to plot them graphically.
+
+```{r interaction-graphical-1}
+#| fig-height: 6
+#| fig-width: 8
+#| fig-align: "center"
+#| dpi: 144
+
+interplot(model2, "edu_scale", "male")
+```
+
+**First**, what exactly gets plotted there? **Second**, how would you give a substantive interpretation to these results?
+
+Remember, an interaction is symmetrical, so you can adopt the opposite interpretation as well.
+
+```{r interaction-graphical-2}
+#| fig-height: 6
+#| fig-width: 8
+#| fig-align: "center"
+#| dpi: 144
+
+interplot(model2, "male", "edu_scale") +
+    geom_hline(yintercept = 0,
+               linewidth = 1.5,
+               color = "red",
+               linetype = "dashed") +
+    theme_clean()
+```
+
+Yet again, the same question - what exactly gets plotted here?^[`interplot()` produces a `ggplot2` object, so it's easy to actually add layers to the plot with the standard `ggplot2` commands.]
+
+```{r interaction-graphical-3}
+#| fig-height: 6
+#| fig-width: 8
+#| fig-align: "center"
+#| dpi: 144
+
+interplot(model2, "male", "edu_scale") +
+    geom_hline(yintercept = 0,
+               linewidth = 1.5,
+               color = "red",
+               linetype = "dashed") +
+    theme_clean() +
+    labs(x = "Years of education (rescaled)",
+         y = "Effect of gender")
+```
+
+A slightly more "honest" way of presenting this plot would be to recognize that education has specific categories (31 of them).
+
+```{r interaction-graphical-4}
+#| fig-height: 6
+#| fig-width: 8
+#| fig-align: "center"
+#| dpi: 144
+
+interplot(model2, "male", "edu_scale",
+          point = TRUE) +
+    geom_hline(yintercept = 0,
+               linewidth = 1.5,
+               color = "red",
+               linetype = "dashed") +
+    theme_clean() +
+    labs(x = "Years of education (rescaled)",
+         y = "Effect of gender") +
+    scale_x_continuous(breaks = c(seq(from = -13,
+                                      to = 15,
+                                      by = 1)))
+```
+
+
+
+# Second interaction practice
+
+This actually relies on the first data set we used today, but incorporating the LSDV approach.
+
+```{r interaction-3}
+model1 <- lm(erps ~ unemp + enp + thresh + as.factor(country),
+             data = df_er)
+
+summary(model1)
+```
+
+## Initial specification
+
+Let's move now to an interaction between `enp` and `thresh`. Before interacting the variables, we should center them.
+
+```{r clean-data-4}
+df_er %<>%
+    mutate(unemp_cen = fun_cent(unemp),
+           enp_cen = fun_cent(enp),
+           thresh_cen = fun_cent(thresh))
+```
+
+```{r interaction-4}
+model2 <- lm(erps ~ unemp_cen + enp_cen + thresh_cen +
+                enp_cen * thresh_cen + as.factor(country),
+             na.action = na.omit,
+             data = df_er)
+
+summary(model2)
+```
+
+1. How to interpret the main effect of `ENP`?
+2. What about the effect of electoral threshold?
+3. What about the effect of the interaction?
+
+## Graphical display
+
+```{r interaction-graphical-5}
+#| fig-height: 6
+#| fig-width: 8
+#| fig-align: "center"
+#| dpi: 144
+
+interplot(model2, "thresh_cen", "enp_cen") +
+    theme_clean() +
+    labs(x = "Effective number of parties",
+         y = "Effect of electoral threshold") +
+    geom_hline(yintercept = 0,
+               linewidth = 1.5,
+               linetype = "dashed",
+               color = "red")
+```
+
+Is our model solving all the problems with heteroskedasticity, though?
+
+```{r breusch-pagan-2}
+bptest(model2)
+```
+
+```{r hc-results}
+model2$newse <- vcovHC(model2, method = "white1",
+                       type = "HC0")
+
+coeftest(model2, model2$newse)
+```
+
+How can we make an interaction plot in this situation, though? By hand.
+
+## Manual approach
+
+```{r extract-needed-quantities}
+betas <- coef(model2)
+varcovmat <- vcovHC(model2, method = "white1",
+                       type = "HC0")
+
+dim(varcovmat)
+```
+
+We then get a sequence for the moderator variable.
+
+```{r get-mod-sequence}
+moderator.seq<- seq(min(df_er$enp_cen, na.rm = TRUE),
+                    max(df_er$enp_cen, na.rm = TRUE),
+                    by = 0.05)
+```
+
+Here is what we have to work with:
+
+- `betas[4]`: main effect of focal independent variable (**threshold**)
+- `betas[20]`: effect of interaction between focal independent (**threshold**) and moderator (**ENP**)
+- `varcovmat[4,4]`: variance of the focal independent variable (**threshold**)
+- `varcovmat[20,20]`: variance of the interaction term
+- `varcovmat[20,4]`: covariance between the interaction and the focal independent variable (**threshold**)
+
+```{r compute-key-quantities}
+eff <- betas[4] + betas[20] * moderator.seq # effect
+v.eff <- varcovmat[4, 4] +
+    (moderator.seq ^ 2) * varcovmat[20, 20] +
+    2 * moderator.seq * varcovmat[20, 4] # variance of effect
+se.eff <- sqrt(v.eff) # S.E. of effect
+lower <- eff - 1.96 * se.eff # lower C.I.
+upper <- eff + 1.96 * se.eff # Upper C.I.
+```
+
+```{r interaction-graphical-6}
+#| fig-height: 6
+#| fig-width: 8
+#| fig-align: "center"
+#| dpi: 144
+
+ggplot(data = NULL,
+       aes(x = moderator.seq,
+           y = eff)) +
+    geom_line(size = 1.25) +
+    scale_x_continuous(breaks = c(min(df_er$enp_cen, na.rm = TRUE),
+                                  mean(df_er$enp_cen, na.rm = TRUE),
+                                  max(df_er$enp_cen, na.rm = TRUE)),
+                       labels = c("Low", "Medium", "High")) +
+    geom_ribbon(data = NULL,
+                aes(ymin = lower,
+                    ymax = upper),
+                fill = "grey60",
+                alpha = 0.5) +
+    geom_hline(yintercept = 0,
+               linetype = "dashed",
+               linewidth = 2,
+               color = "red") +
+    labs(x = "Effective number of parties",
+         y = "Effect of electoral threshold") +
+    theme_clean()
+```
+
+# Package versions
+
+Package versions used in this script.
+
+```{r package-versions}
+sessionInfo()
+```

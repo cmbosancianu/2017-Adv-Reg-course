@@ -1,0 +1,619 @@
+---
+title: "Practice Code: Day 1"
+author:
+  name: "Constantin Manuel Bosancianu"
+  orcid: 0000-0001-7950-9798
+  email: bosancianu@icloud.com
+date: "July 31, 2017"
+execute:
+  eval: true
+  echo: true
+  warning: false
+  error: false
+format:
+  html:
+    toc: true
+    code-fold: true
+    toc-location: left
+    theme: minty
+    number-sections: true
+    reference-location: margin
+    embed-resources: true
+---
+
+# Introduction
+
+The data for today refers to the average SAT level in each of the 51 American states, and what it is impacted by. The example scales easily to other settings, such as comparisons between countries in the PISA rankings, or between schools within a decentralized education system. The data comes from @hamilton_statistics_2006, in a Stata format. It originates from data collected around 1990-1991.
+
+It's important to keep the data small, as we can easily identify in a small data set which are the outliers, and understand what is so particular about them. This is rarely the case with a large-N data set.
+
+**Warning**: the code chunk below will install packages on your system (if these are not already installed).
+
+```{r load-packages}
+library(pacman)
+p_load(readstata13, tidyverse, lmtest, MASS, car, texreg, knitr,
+       kableExtra, magrittr, ggthemes, effects, corrgram)
+
+options(scipen = 8) # Avoid scientific notation for coefficients
+```
+
+The `p_load()` function from the `pacman` package looks for the collection of packages you specify on your machine. If it finds them, it loads them in the working environment; if it doesn't, it downloads them, installs them, and then loads them.
+
+# Reading data
+
+The code chunk below assumes that the data set is in the `02-data` folder. This means we have to go one folder up from the code folder, and then into the data folder.
+
+```{r read-data}
+df_sat <- read.dta13(file = "../02-data/11-Education-states.dta",
+                     convert.factors = TRUE)
+```
+
+```{r helpful-functions}
+fun_cent <- function(x) {
+    x - mean(x, na.rm = TRUE)
+}
+```
+
+We will be using a lot of functions from the `dplyr` package and from some of the other packages that make up the `tidyverse`. Despite some opinions to the contrary ([https://github.com/matloff/TidyverseSkeptic](https://github.com/matloff/TidyverseSkeptic)), I believe it is a very elegant way of thinking about coding, and one which I think will grow in importance. It pays off to learn it early and well.
+
+The pipe operator (`%>%`) serves to take the output from a line of code, and feed it as input into the next line of code. It can be loosely translated as "with this... do that...".
+
+```{r examine-data}
+df_sat %>%
+    glimpse()
+```
+
+# Codebook
+
+A few of the most important variables
+
+1. `pop`: poppulation
+2. `density`: population density per square mile
+3. `csat`: mean composite SAT score
+4. `expense`: primary & secondary expenditure per pupil
+5. `percent`: % of HS graduates taking SAT
+6. `income`: median HH income, in 1000s
+7. `high`: % of adults with HS diploma
+8. `college`: % of adults with college degree
+9. `region`: geographical region
+
+# Initial model
+
+I will start off by exploring a very simple model with 2 continuous predictors and a dichotomous one. First, I want to rescale the variables, to make sure that the intercept is not interpreted in an absurd way.
+
+I also generate an indicator variable for the region in which the state is located. For this particular regression, I distinguish between the Northeast of the US (including District of Columbia), and everywhere else.
+
+```{r clean-data}
+df_sat %<>%
+    mutate(exp_scale = fun_cent(expense),
+           per_scale = fun_cent(percent),
+           region = as.character(region)) %>%
+    mutate(neast = if_else(region == "N. East", 1, 0),
+           neast = if_else(state == "District of Columbia", 1, neast),
+           neast = as.factor(neast))
+```
+
+```{r initial-model}
+model1 <- lm(csat ~ exp_scale + per_scale + neast,
+             data = df_sat,
+             na.action = na.omit)
+
+summary(model1)
+```
+
+You can easily export this output in a format that makes it easy to include the results in a paper, with the help of the `htmlreg()` or `texreg()` functions from the `texreg` package.
+
+```{r export-reg-results}
+htmlreg(list(model1), # List of models - here we have only 1
+        file = "../06-output/Table-1.html", # output file
+        custom.model.names = c("DV: CSAT"), # custom names for models
+        custom.coef.names = c("(Intercept)", "Educ. expense",
+                              "% SAT takers", "Northeast & DC"), # custom variable names
+        digits = 3, # decimal places for coefficients and SEs
+        single.row = FALSE) # display BETA and SEs under each other
+
+# It can also export in LaTeX format, if need be
+texreg(list(model1), # List of models - here we have only 1
+       file = "../06-output/Table-1.tex", # output file
+       custom.model.names = c("DV: CSAT"), # custom names for models
+       custom.coef.names = c("(Intercept)", "Educ. expense",
+                             "% SAT takers", "Northeast & DC"), # custom variable names
+       digits = 3, # decimal places for coefficients and SEs
+       single.row = FALSE, # display BETA and SEs under each other
+       booktabs = TRUE, # Assume package for nice borders is present
+       dcolumn = TRUE, # Assume package for decimal point alignment is present
+       use.packages = FALSE) # Do not include these packages
+```
+
+Instead of displaying coefficients, you might want to use a visual presentation of the effects of variables. There are many packages for this, but the `effects` package is a simple and fairly powerful one.
+
+```{r display-coef-plot-1}
+#| fig-height: 6
+#| fig-width: 8
+#| fig-align: "center"
+#| dpi: 144
+
+plot(Effect(focal.predictors = "per_scale", # What is the predictor of interest?
+            mod = model1, # The model estimates which effect is based on
+            xlevels = list(perScale = -20:20)), # Range of the predictor of
+                                     # interest, for presenting effects
+     main = "Effect of % SAT takers on SAT score") # Figure headline
+```
+
+```{r display-coef-plot-2}
+#| fig-height: 6
+#| fig-width: 8
+#| fig-align: "center"
+#| dpi: 144
+
+# It also works for dichotomous predictors
+plot(Effect(focal.predictors = "neast",
+            mod = model1,
+            xlevels = list(neast=c(0,1))),
+     main = "Effect of region on SAT score")
+```
+
+Let's turn to our assumptions, though...
+
+# Linearity
+
+We have to produce a component-plus-residual plot.
+
+```{r component-residual-plot-1}
+#| fig-height: 6
+#| fig-width: 8
+#| fig-align: "center"
+#| dpi: 144
+
+crPlots(model1, "exp_scale",
+        main = "Component-plus-residual plot",
+        xlab = "Spending on educ. (USD)",
+        ylab = "Cumulative SAT (partial residuals)")
+```
+
+It's maybe a bit of a stretch to call this a linear relationship, but given that it's a small sample, it's perhaps reasonably close to a linear one. Let's see what the other diagnostics tell us before we make a decision in this case.
+
+```{r component-residual-plot-2}
+#| fig-height: 6
+#| fig-width: 8
+#| fig-align: "center"
+#| dpi: 144
+
+crPlots(model1, "per_scale",
+        main = "Component-plus-residual plot",
+        xlab = "% graduates taking SAT",
+        ylab = "Cumulative SAT (partial residuals)")
+```
+
+
+
+# Homoskedasticity
+
+First, a plot of fitted values (Y-hat) against studentized residuals.^[We use the `studres()` function from the `MASS` package for this.]
+
+```{r fitted-vs-studentized-res}
+#| fig-height: 6
+#| fig-width: 8
+#| fig-align: "center"
+#| dpi: 144
+
+plot(fitted(model1),
+     studres(model1),
+     xlab = "Fitted values",
+     ylab = "Studentized residuals",
+     main = "Fitted vs. studentized residuals")
+abline(h = 0, lty = 2)
+lines(lowess(fitted(model1),
+      studres(model1)),
+      col = "blue")
+```
+
+It's a small sample size, so I would not automatically say that there is heteroskedasticity.
+
+```{r predictors-vs-studentized-1}
+#| fig-height: 6
+#| fig-width: 8
+#| fig-align: "center"
+#| dpi: 144
+
+plot(df_sat$exp_scale,
+     studres(model1),
+     xlab = "Spending educ.",
+     ylab = "Studentized residuals",
+     main = "Expense vs. studentized residuals")
+abline(h = 0, lty = 2)
+lines(lowess(df_sat$exp_scale,
+      studres(model1)),
+      col = "blue")
+```
+
+```{r predictors-vs-studentized-2}
+#| fig-height: 6
+#| fig-width: 8
+#| fig-align: "center"
+#| dpi: 144
+
+plot(df_sat$per_scale,
+     studres(model1),
+     xlab = "% graduates taking SAT",
+     ylab = "Studentized residuals",
+     main = "% graduates vs. studentized residuals")
+abline(h = 0, lty = 2)
+lines(lowess(df_sat$per_scale,
+      studres(model1)),
+      col = "blue")
+```
+
+
+# Normality
+
+We would need a quantile comparison plot in this case.
+
+```{r qq-plot}
+#| fig-height: 6
+#| fig-width: 8
+#| fig-align: "center"
+#| dpi: 144
+
+qqPlot(model1, xlab = "t distribution",
+       ylab = "Studentized residuals",
+       id.method = "identify")
+```
+
+At least, overall, everything looks OK in terms of the normal distribution.
+
+
+
+# Specification error
+
+What other factors could be influencing average SAT scores? It turns out that a good case can be made for income. With higher average incomes, more can be invested in a child's education: special tutoring, books etc. At the same time, we might simply be dealing with reverse causality: in places with more capable students companies are interested in moving in and benefitting from the workforce, which means higher salaries.
+
+Let's assume that it might be the first.
+
+```{r improved-specification}
+model2 <- lm(csat ~ exp_scale + per_scale + neast + income,
+             data = df_sat,
+             na.action = na.omit)
+summary(model2)
+```
+
+There is an effect there, in the direction we expected. We also see that the effect of being in the Northeast of the US becomes stronger. Without this additional control we would have underestimated the SAT scores for Northeastern states.
+
+# Collinearity
+
+```{r examine-correlations}
+#| fig-height: 6
+#| fig-width: 6
+#| fig-align: "center"
+#| dpi: 144
+
+corrgram(df_sat[ ,c("expense", "percent", "income")],
+         lower.panel = panel.pts,
+         upper.panel = panel.cor)
+```
+
+The correlations are pretty high here, but a bit below the threshold mentioned by Fox. In survey-based research you will typically not see such high correlations.
+
+# Solving problems
+
+## Variable transformations
+
+```{r solving-1}
+#| fig-height: 4
+#| fig-width: 5
+#| fig-align: "center"
+#| dpi: 144
+ggplot(df_sat,
+       aes(x = expense)) +
+    geom_histogram() +
+    theme_clean()
+```
+
+The distribution is a bit skewed here, which might be responsible for the problems we are seeing in the residuals. I will use a square root transformation.
+
+```{r solving-2}
+#| fig-height: 4
+#| fig-width: 5
+#| fig-align: "center"
+#| dpi: 144
+
+df_sat %<>%
+    mutate(exp_sqr = 1 / sqrt(expense))
+ggplot(df_sat,
+       aes(x = exp_sqr)) +
+    geom_histogram() +
+    theme_clean()
+```
+
+A little bit better, but still not completely normal.
+
+```{r solving-3}
+#| fig-height: 4
+#| fig-width: 5
+#| fig-align: "center"
+#| dpi: 144
+
+ggplot(df_sat,
+       aes(x = percent)) +
+    geom_histogram() +
+    theme_clean()
+```
+
+No transformation can solve this one.
+
+```{r solving-4}
+#| fig-height: 4
+#| fig-width: 5
+#| fig-align: "center"
+#| dpi: 144
+
+ggplot(df_sat,
+       aes(x = income)) +
+    geom_histogram() +
+    theme_clean()
+```
+
+A square root transformation could improve things a bit here as well, from which we take the inverse.
+
+```{r solving-5}
+#| fig-height: 4
+#| fig-width: 5
+#| fig-align: "center"
+#| dpi: 144
+
+df_sat %<>%
+    mutate(inc_sqr = 1 / sqrt(income))
+ggplot(df_sat,
+       aes(x = inc_sqr)) +
+    geom_histogram() +
+    theme_clean()
+```
+
+There also seemed to be some problem with non-constant error mean in some of the plots that checked for heteroskedasticity.
+
+```{r solving-6}
+#| fig-height: 4
+#| fig-width: 5
+#| fig-align: "center"
+#| dpi: 144
+
+ggplot(df_sat,
+       aes(x = percent,
+           y = csat)) +
+    geom_point() +
+    theme_clean() +
+    geom_smooth(method = "loess",
+                se = FALSE)
+```
+
+For `percent`, nothing really gets rid of the non-linearity. The biggest improvement was found for the inverse of the square root, which I used here.
+
+```{r solving-7}
+df_sat %<>%
+    mutate(perc_sqr = 1 / sqrt(percent))
+```
+
+## Re-estimating model
+
+So let's try for the model again, this time with the added `income` predictor, which came out as significant.
+
+```{r re-run-improved-specification}
+model3 <- lm(csat ~ exp_sqr + perc_sqr + neast + inc_sqr,
+             data = df_sat,
+             na.action = na.omit)
+summary(model3)
+```
+
+Some of the coefficients are different than before, but this is understandable given that we have changed the scale of measurement for some of these predictors.
+
+Now we go through the checks again, starting with heteroskedasticity.
+
+```{r solving-8}
+#| fig-height: 6
+#| fig-width: 8
+#| fig-align: "center"
+#| dpi: 144
+
+plot(fitted(model3), studres(model3),
+     xlab = "Fitted values",
+     ylab = "Studentized residuals",
+     main = "Fitted vs. studentized residuals")
+abline(h = 0, lty = 2)
+lines(lowess(fitted(model3), studres(model3)), col = "blue")
+```
+
+```{r solving-9}
+#| fig-height: 6
+#| fig-width: 8
+#| fig-align: "center"
+#| dpi: 144
+
+plot(df_sat$exp_sqr, studres(model3),
+     xlab = "Spending educ.",
+     ylab = "Studentized residuals",
+     main = "Expense vs. studentized residuals")
+abline(h = 0, lty = 2)
+lines(lowess(df_sat$exp_sqr, studres(model3)), col = "blue")
+```
+
+```{r solving-10}
+#| fig-height: 6
+#| fig-width: 8
+#| fig-align: "center"
+#| dpi: 144
+
+plot(df_sat$percent, studres(model3),
+     xlab = "% graduates taking SAT",
+     ylab = "Studentized residuals",
+     main = "% graduates vs. studentized residuals")
+abline(h = 0, lty = 2)
+lines(lowess(df_sat$percent, studres(model3)), col = "blue")
+```
+
+Finally, we check for normality in the residuals.
+
+```{r solving-11}
+#| fig-height: 6
+#| fig-width: 8
+#| fig-align: "center"
+#| dpi: 144
+
+qqPlot(model3,
+       xlab = "t distribution",
+       ylab = "Studentized residuals",
+       id.method = "identify")
+```
+
+Not everything is perfect, but it might be as best as we can do under the circumstances.
+
+# Bonus: Unusual and influential data
+
+We did not get a chance to talk properly about this topic during the lecture, but I am leaving the code here, as you may need it when you will cover the chapters in Fox (2008) on your own.
+
+We can simply run the initial model, for SAT scores and expense on education, again.
+
+```{r original-specification}
+model1 <- lm(csat ~ exp_scale + per_scale + neast,
+             data = df_sat,
+             na.action = na.omit)
+summary(model1)
+```
+
+Let's look at the relationship between expenditure and SAT score.
+
+```{r plot-expense-sat}
+#| fig-height: 6
+#| fig-width: 8
+#| fig-align: "center"
+#| dpi: 144
+
+ggplot(df_sat,
+       aes(x = expense,
+           y = csat,
+           label = state)) +
+    geom_text() +
+    xlab("Per capita educ. expense") +
+    ylab("Cumulative SAT score") +
+    theme_clean() +
+    geom_smooth(method = "lm",
+                se = FALSE)
+```
+
+**Questions**:
+
+1. How would you designate South Carolina, or Iowa? Are they outliers, or/and cases with high or low leverage? Are they influential cases or not?
+2. How would you designate the District of Columbia? Is it an outlier, or/and an observation with high or low leverage? Is it an influential case or not?
+
+## Leverage
+
+The `hatvalues()` function computes these hat values. Here, I add them to the data set.
+
+```{r leverage-1}
+df_sat$hatv <- hatvalues(model1) # Store hat values in data frame
+df_sat$row <- rownames(df_sat) # Create variable for row names, used in labeling points
+```
+
+```{r leverage-2}
+#| fig-height: 5
+#| fig-width: 9
+#| fig-align: "center"
+#| dpi: 144
+plot(hatvalues(model1), # Plot the hat values
+     main = "Hat values (assessing leverage)")
+abline(h = c(2, 3) * 4 / length(df_sat$state), lty = 2) # Plot thresholds for hat values
+with(subset(df_sat, df_sat$hatv >= 0.15),
+     text(row, hatv, state, pos = 2)) # Label needed points
+```
+
+Remember, though, that for small samples, $3 \times$ average hat value is a better threshold than $2 \times$ average hat value.
+
+## Outliers
+
+The `outlierTest()` function is available in the `car` package.
+
+```{r outliers-1}
+outlierTest(model1)
+```
+
+Observation 16 is identified as perhaps a bit problematic (as long as no studentized residual has a Bonferroni $p < 0.05$, things are good), although the central message is that it's not unusual to see such a residual in a sample as small as hours.
+
+```{r outliers-2}
+df_sat[which(df_sat$row == 16), ]
+```
+
+## Influence
+
+I will plot here only Cook's *D*, although a few other measures, such as **DFBETA** and **DFBETAS** have been proposed.
+
+```{r influence-1}
+#| fig-height: 5
+#| fig-width: 8
+#| fig-align: "center"
+#| dpi: 144
+rownames(df_sat) <- df_sat$state
+influencePlot(model1,
+              xlab = "Hat-values",
+              ylab = "Studentized residuals",
+              id = list(method = "noteworthy"))
+```
+
+Because we specified "noteworthy" as a method, the function will use a set of pre-defined decision rules to label specific points in the plot that are worthy of inspection. If we had specified "identify" as a method, then the function would wait for you to click on the dots that you want labeled, and then for you to hit "Esc" when you're done with labeling.
+
+So which are those overlapping residuals?
+
+```{r influence-2}
+studres(model1)
+```
+
+```{r influence-3, results='asis'}
+df_sat %>%
+    filter(row %in% c(2, 9, 16, 30, 49)) %>%
+    kable(caption = "5 problematic cases",
+          caption.above = TRUE) %>%
+    kable_styling(full_width = TRUE)
+```
+
+## Addressing outliers
+
+In terms of outliers and influential cases, Alaska, District of Columbia, and Iowa seem to consistently appear in the list of problematic observations.
+
+```{r tackle-outliers-1, results='asis'}
+df_sat %>%
+    filter(state %in% c("Alaska", "District of Columbia", "Iowa")) %>%
+    kable(caption = "3 problematic cases",
+          caption.above = TRUE) %>%
+    kable_styling(full_width = TRUE)
+```
+
+At this point, in the course of a real project, you might consult the specifics of these three cases and see whether they are similar in terms of a factor that is not included in our model. That same factor might be a predictor of average SAT scores. Including it in the model might solve the problems.
+
+A secondary strategy might be to remove these cases, and re-estimate the model. This should not be done automatically, though, but rather after some reflection as to whether this is the best course of action.
+
+```{r tackle-outliers-2}
+df_sat %<>%
+    filter(!(state %in% c("Alaska", "District of Columbia", "Iowa")))
+model3 <- lm(csat ~ exp_scale + per_scale + neast,
+             data = df_sat,
+             na.action = na.omit)
+summary(model3)
+```
+
+```{r tackle-outliers-3}
+#| fig-height: 6
+#| fig-width: 8
+#| fig-align: "center"
+#| dpi: 144
+
+influencePlot(model3,
+              xlab = "Hat-values",
+              ylab = "Studentized residuals",
+              id = list(method = "noteworthy"))
+```
+
+# Package versions
+
+Package versions used in this script.
+
+```{r package-versions}
+sessionInfo()
+```
